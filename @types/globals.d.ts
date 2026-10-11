@@ -99,6 +99,11 @@ type YTAppInterface = {
     avatarUrl?: string;
     userType?: string;
   };
+  /** Present in some YouTrack versions; installation id is used for /api/appResources/{appId}/… */
+  widget?: {
+    id?: string;
+    appId?: string;
+  };
   register: (appApi?: AppAPI) => Promise<HostAPI | EmbeddableWidgetAPI>;
 }
 

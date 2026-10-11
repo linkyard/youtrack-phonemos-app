@@ -47,15 +47,18 @@ npm run pack
 ### Keycloak client
 
 1. Create a **confidential** client with Authorization Code + PKCE (S256).
-2. **Valid redirect URIs** (YouTrack embeds widgets as `about:srcdoc`, so you cannot use `/app/phonemos/...`):
+2. **Valid redirect URIs** — YouTrack embeds widgets as `about:srcdoc`, so do **not** use `/app/phonemos/...`. Use the app’s packaged HTML via [appResources](https://youtrack.jetbrains.com/issue/JT-90146):
 
-   `https://rawcdn.githack.com/linkyard/youtrack-phonemos-oauth-callback/3dbd8da/index.html`
+   `https://{youtrack}/api/appResources/{installationId}/widgets/oauth-popup-callback.html`
 
-   Put the **same** value in the YouTrack app setting **OAuth redirect URI**.
+   The ticket widget shows the exact URL under **Connect to Phonemos**. Easiest Keycloak pattern while testing:
+
+   `https://{youtrack}/api/appResources/*`
+
 3. Scopes: at least `openid`.
-4. Put client id/secret and the auth/token URLs into the YouTrack app settings.
+4. Put client id/secret and the auth/token URLs into the YouTrack app settings. **OAuth redirect URI** is an optional fallback; the widget prefers the derived `appResources` URL.
 
-The hosted callback page returns the authorization code to the ticket widget via `postMessage` / `window.name`. Source: [youtrack-phonemos-oauth-callback](https://github.com/linkyard/youtrack-phonemos-oauth-callback).
+The callback HTML returns the authorization code to the ticket widget via `postMessage` / `window.name`.
 
 ### Search
 

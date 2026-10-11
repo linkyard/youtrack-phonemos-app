@@ -40,6 +40,11 @@ export default defineConfig({
         {
           src: 'widgets/**/*.{svg,png,jpg,json}',
           dest: '.'
+        },
+        // Standalone OAuth popup callback (JT-90146 appResources redirect target)
+        {
+          src: 'widgets/oauth-popup-callback.html',
+          dest: '.'
         }
       ],
       structured: true

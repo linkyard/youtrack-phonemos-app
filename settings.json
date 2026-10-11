@@ -41,9 +41,9 @@
     },
     "oauthRedirectUri": {
       "title": "OAuth redirect URI",
-      "description": "Must match Keycloak. YouTrack widgets run as about:srcdoc, so use https://rawcdn.githack.com/linkyard/youtrack-phonemos-oauth-callback/3dbd8da/index.html",
+      "description": "Optional fallback. Prefer the URL shown under Connect (…/api/appResources/{id}/widgets/oauth-popup-callback.html). In Keycloak allow that URL or https://{youtrack}/api/appResources/*",
       "type": "string",
-      "default": "https://rawcdn.githack.com/linkyard/youtrack-phonemos-oauth-callback/3dbd8da/index.html",
+      "default": "",
       "x-scope": "GLOBAL"
     },
     "withinObjectId": {

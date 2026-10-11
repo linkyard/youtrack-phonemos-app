@@ -123,10 +123,16 @@ function exchangeToken(settings, formFields) {
   const origin = slash === -1 ? tokenUrl : tokenUrl.substring(0, slash);
   const path = slash === -1 ? '/' : tokenUrl.substring(slash);
 
+  // Keycloak accepts client_secret_post; also send Basic for clients that require it.
+  const fields = Object.assign({}, formFields, {
+    client_id: settings.oauthClientId,
+    client_secret: settings.oauthClientSecret,
+  });
+
   const bodyParts = [];
-  Object.keys(formFields).forEach(function (key) {
-    if (formFields[key] != null) {
-      bodyParts.push(encodeURIComponent(key) + '=' + encodeURIComponent(String(formFields[key])));
+  Object.keys(fields).forEach(function (key) {
+    if (fields[key] != null) {
+      bodyParts.push(encodeURIComponent(key) + '=' + encodeURIComponent(String(fields[key])));
     }
   });
 
@@ -139,9 +145,17 @@ function exchangeToken(settings, formFields) {
 
 function mapTokenResponse(serviceResponse) {
   if (!serviceResponse || !serviceResponse.isSuccess) {
+    const data = serviceResponse ? parseJsonSafe(serviceResponse) : null;
+    const detail =
+      (data && (data.error_description || data.error)) ||
+      (serviceResponse && serviceResponse.response) ||
+      '';
     return {
       success: false,
-      message: 'Token endpoint returned status ' + (serviceResponse ? serviceResponse.code : 'unknown') + '.',
+      message:
+        'Token endpoint returned status ' +
+        (serviceResponse ? serviceResponse.code : 'unknown') +
+        (detail ? ': ' + String(detail).substring(0, 300) : '.'),
     };
   }
   const data = parseJsonSafe(serviceResponse);

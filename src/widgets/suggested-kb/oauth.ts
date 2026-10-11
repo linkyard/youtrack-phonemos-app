@@ -1,13 +1,9 @@
 import {waitForOAuthResult} from '../shared/oauth-result';
-import {
-  DEFAULT_POPUP_CALLBACK_URL,
-  deriveOAuthCallbackUrl,
-  resolveOAuthRedirectUri,
-} from '../shared/redirect-uri';
+import {deriveOAuthCallbackUrl, getRedirectDebugInfo, resolveOAuthRedirectUri} from '../shared/redirect-uri';
 
 type HostAPI = Awaited<ReturnType<typeof YTApp.register>>;
 
-export {DEFAULT_POPUP_CALLBACK_URL, deriveOAuthCallbackUrl, resolveOAuthRedirectUri};
+export {deriveOAuthCallbackUrl, getRedirectDebugInfo, resolveOAuthRedirectUri};
 
 export type PhonemosTokens = {
   accessToken: string;

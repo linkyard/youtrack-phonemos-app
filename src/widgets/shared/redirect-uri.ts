@@ -1,9 +1,9 @@
 /**
- * Hosted callback used when YouTrack embeds widgets as about:srcdoc (no file URL).
- * Served as text/html (jsDelivr/gist raw are text/plain + nosniff and will not run JS).
+ * YouTrack serves packaged widget files at:
+ *   https://{host}/api/appResources/{appInstallId}/widgets/...
+ * See JT-90146 — use that URL as OAuth redirect_uri (not /app/... and not about:srcdoc).
  */
-export const DEFAULT_POPUP_CALLBACK_URL =
-  'https://rawcdn.githack.com/linkyard/youtrack-phonemos-oauth-callback/3dbd8da/index.html';
+export const OAUTH_POPUP_CALLBACK_FILE = 'oauth-popup-callback.html';
 
 function isYouTrackAppShellUrl(url: string): boolean {
   return /\/app\/[^/]+\/oauth-callback/i.test(url);
@@ -22,8 +22,39 @@ function isUsableRedirectUri(url: string): boolean {
   return true;
 }
 
-export function listWidgetAssetUrls(): string[] {
+function resolveAgainstWidgetBase(ref: string): string | null {
+  try {
+    const base = document.baseURI || window.location.href;
+    return new URL(ref, base).toString();
+  } catch {
+    return null;
+  }
+}
+
+/** URLs that may contain /api/appResources/{id}/widgets/ */
+export function listWidgetResourceHints(): string[] {
   const out: string[] = [];
+  const push = (value: string | null | undefined) => {
+    if (value && !out.includes(value)) {
+      out.push(value);
+    }
+  };
+
+  try {
+    push(document.baseURI);
+  } catch {
+    // ignore
+  }
+
+  try {
+    const baseHref = document.querySelector('base')?.getAttribute('href');
+    if (baseHref) {
+      push(resolveAgainstWidgetBase(baseHref));
+    }
+  } catch {
+    // ignore
+  }
+
   const nodes = [
     ...Array.from(document.querySelectorAll('script[src]')),
     ...Array.from(document.querySelectorAll('link[href]')),
@@ -33,53 +64,67 @@ export function listWidgetAssetUrls(): string[] {
     if (!raw) {
       continue;
     }
-    try {
-      out.push(new URL(raw, window.location.href).toString());
-    } catch {
-      // ignore
-    }
-  }
-  return out;
-}
-
-export function getRedirectDebugInfo(): string {
-  return [
-    `location=${window.location.href}`,
-    `derived=${deriveOAuthCallbackUrl() || '(none)'}`,
-    `default=${DEFAULT_POPUP_CALLBACK_URL}`,
-  ].join('\n');
-}
-
-/**
- * Try to find a same-origin widget HTML URL. YouTrack Cloud often uses
- * about:srcdoc, in which case this returns null.
- */
-export function deriveOAuthCallbackUrl(): string | null {
-  if (String(window.location.href).startsWith('about:')) {
-    return null;
+    push(resolveAgainstWidgetBase(raw));
   }
 
   try {
-    const current = new URL(window.location.href);
-    current.search = '';
-    current.hash = '';
-    const href = current.toString();
-    if (/suggested-kb/i.test(href)) {
-      return href.replace(/suggested-kb/gi, 'oauth-callback');
-    }
-    if (/oauth-callback\/index\.html/i.test(href)) {
-      return href;
+    for (const entry of performance.getEntriesByType('resource') as PerformanceResourceTiming[]) {
+      if (/appResources/i.test(entry.name)) {
+        push(entry.name);
+      }
     }
   } catch {
     // ignore
   }
 
+  return out;
+}
+
+export function callbackUrlFromAppResourcesHint(url: string): string | null {
   try {
-    for (const assetUrl of listWidgetAssetUrls()) {
-      const abs = new URL(assetUrl);
-      const match = abs.pathname.match(/^(.*\/widgets)\/assets\//i);
-      if (match) {
-        return `${abs.origin}${match[1]}/oauth-callback/index.html`;
+    const absolute = new URL(url, document.baseURI || window.location.href);
+    const match = absolute.pathname.match(/^(.*\/api\/appResources\/[^/]+\/widgets)\//i);
+    if (!match) {
+      return null;
+    }
+    return `${absolute.origin}${match[1]}/${OAUTH_POPUP_CALLBACK_FILE}`;
+  } catch {
+    return null;
+  }
+}
+
+export function getRedirectDebugInfo(): string {
+  return [
+    `location=${window.location.href}`,
+    `baseURI=${document.baseURI}`,
+    `derived=${deriveOAuthCallbackUrl() || '(none)'}`,
+    `hints=${listWidgetResourceHints().slice(0, 5).join(' | ') || '(none)'}`,
+  ].join('\n');
+}
+
+/**
+ * Build OAuth redirect URI for the static popup callback under appResources.
+ */
+export function deriveOAuthCallbackUrl(): string | null {
+  for (const hint of listWidgetResourceHints()) {
+    const fromHint = callbackUrlFromAppResourcesHint(hint);
+    if (fromHint) {
+      return fromHint;
+    }
+  }
+
+  // Non-srcdoc fallbacks (local/dev).
+  try {
+    if (!String(window.location.href).startsWith('about:')) {
+      const current = new URL(window.location.href);
+      current.search = '';
+      current.hash = '';
+      if (/suggested-kb|oauth-callback/i.test(current.href)) {
+        const path = current.pathname.replace(/\/widgets\/[^/]+\/.*$/i, `/widgets/${OAUTH_POPUP_CALLBACK_FILE}`);
+        if (path.includes('/widgets/')) {
+          current.pathname = path;
+          return current.toString();
+        }
       }
     }
   } catch {
@@ -96,9 +141,18 @@ export function resolveOAuthRedirectUri(configured?: string): string {
   }
 
   const trimmed = configured?.trim() || '';
-  if (isUsableRedirectUri(trimmed)) {
+  if (isUsableRedirectUri(trimmed) && /appResources/i.test(trimmed)) {
     return trimmed;
   }
 
-  return DEFAULT_POPUP_CALLBACK_URL;
+  if (isUsableRedirectUri(trimmed) && !isYouTrackAppShellUrl(trimmed)) {
+    // Allow an explicit admin override (e.g. while testing), but prefer appResources.
+    return trimmed;
+  }
+
+  throw new Error(
+    'Unable to determine YouTrack appResources OAuth callback URL from this widget. ' +
+      'Expected document.baseURI like https://{youtrack}/api/appResources/{appId}/widgets/...\n' +
+      getRedirectDebugInfo(),
+  );
 }
