@@ -7,14 +7,14 @@
     "name": "Phonemos GmbH",
     "url": "https://phonemos.com"
   },
-  "icon": "icon.svg",
+  "icon": "icon.png",
   "widgets": [
     {
       "key": "suggested-kb",
       "name": "Suggested knowledge base articles",
       "indexPath": "suggested-kb/index.html",
       "extensionPoint": "ISSUE_BELOW_SUMMARY",
-      "iconPath": "suggested-kb/widget-icon.svg",
+      "iconPath": "suggested-kb/widget-icon.png",
       "description": "Suggests Phonemos articles for the current helpdesk ticket",
       "permissions": ["READ_ISSUE"],
       "expectedDimensions": {
@@ -27,7 +27,7 @@
       "name": "Phonemos sign-in",
       "indexPath": "oauth-callback/index.html",
       "extensionPoint": "MAIN_MENU_ITEM",
-      "iconPath": "oauth-callback/widget-icon.svg",
+      "iconPath": "oauth-callback/widget-icon.png",
       "description": "OAuth redirect target for Phonemos sign-in",
       "showHeader": false
     }
