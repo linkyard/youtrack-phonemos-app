@@ -2,16 +2,16 @@
   "$schema": "https://json.schemastore.org/youtrack-app.json",
   "name": "phonemos",
   "title": "Phonemos",
-  "description": "Gives access to the Phonemos knowledge base from within Youtrack. Suggests Phonemos knowledge base articles on YouTrack Helpdesk tickets. Each person signs in with their own Phonemos account (OAuth2), and Phonemos permissions decide which pages they can open.",
+  "description": "Connector that gives access to the Phonemos knowledge base from within Youtrack. Suggests Phonemos knowledge base articles on YouTrack Helpdesk tickets. Each person signs in with their own Phonemos account (OAuth2), and Phonemos permissions decide which pages they can open.",
   "version": "1.0.0",
   "url": "https://github.com/linkyard/youtrack-phonemos-app",
   "icon": "icon.png",
   "minYouTrackVersion": "2026.2.0",
   "changeNotes": "First release. Suggests Phonemos articles from the ticket summary, description, and the latest reporter comment, and adds a main-menu search of the connected site.",
   "vendor": {
-    "name": "Phonemos GmbH",
-    "url": "https://phonemos.com",
-    "email": "youtrack-support@phonemos.com"
+    "name": "linkyard ltd.",
+    "url": "https://www.linkyard.ch",
+    "email": "support@linkyard.ch"
   },
   "widgets": [
     {

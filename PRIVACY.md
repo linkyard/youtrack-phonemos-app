@@ -2,24 +2,24 @@
 
 This notice describes how the Phonemos app for YouTrack processes personal data. It applies only to that app.
 
-The general Phonemos privacy policy covers the Phonemos websites, mail campaigns, and related services. It does not cover this app. That policy is published at [Datenschutzbestimmungen](https://wiki.linkyard.cloud/t/0GZPGlFvTqWz9iCCcJtJ2Q/w/GGUEXWYIT3KZ5gKYQ7HfJQ). Controller contact details, data-subject rights, the right to object, and the security measures described there also apply here.
+The general Phonemos privacy policy covers the Phonemos websites, mail campaigns, and related services. It does not cover this app. That policy is published at [Datenschutzbestimmungen](https://wiki.linkyard.cloud/t/0GZPGlFvTqWz9iCCcJtJ2Q/w/GGUEXWYIT3KZ5gKYQ7HfJQ). Controller contact details, data-subject rights, the right to object, and the security measures described there also apply here where this notice does not say otherwise.
 
 ## 1 Controller and roles
 
 The app publisher is:
 
-Phonemos GmbH, Junkerngasse 39, 3011 Bern, Switzerland  
-Email: [dpo@phonemos.com](mailto:dpo@phonemos.com)
+linkyard ltd. (linkyard ag), Junkerngasse 39, 3011 Bern, Switzerland  
+Email: [support@linkyard.ch](mailto:support@linkyard.ch)
 
-Phonemos GmbH does not operate the YouTrack site on which the app is installed, and it does not choose which Phonemos site the app talks to. The organisation that installs the app (the YouTrack administrator) configures the Phonemos base URL, the OAuth client, and the search root.
+linkyard ltd. does not operate the YouTrack site on which the app is installed, and it does not choose which Phonemos site the app talks to. The organisation that installs the app (the YouTrack administrator) configures the Phonemos base URL, the OAuth client, and the search root.
 
-- For ticket content and the identity of YouTrack users, that organisation is the controller. Phonemos GmbH is the author of the app, not the controller of that content.
-- When the configured Phonemos site is Phonemos Cloud operated by Phonemos GmbH, the customer remains the controller and Phonemos GmbH processes the data as a processor under the [Data Processing Agreement](https://doc.phonemos.com/guide/da97d1f8-d8b0-4015-a903-9f99fc8fd7f8).
-- When the configured Phonemos site is operated by the customer or by another provider, that operator receives the data. Phonemos GmbH does not.
+- For ticket content and the identity of YouTrack users, that organisation is the controller. linkyard ltd. is the publisher of the app, not the controller of that content.
+- When the configured Phonemos site is Phonemos Cloud operated by Phonemos LLC, the customer remains the controller and Phonemos LLC processes the data as a processor under the [Data Processing Agreement](https://doc.phonemos.com/guide/da97d1f8-d8b0-4015-a903-9f99fc8fd7f8).
+- When the configured Phonemos site is operated by the customer or by another provider, that operator receives the data. Neither linkyard ltd. nor Phonemos LLC receives it through this app.
 
 ## 2 What the app processes
 
-The app runs inside YouTrack. It does not run on a Phonemos GmbH server, and it does not send usage statistics to Phonemos GmbH.
+The app runs inside YouTrack. It does not run on a linkyard or Phonemos server, and it does not send usage statistics to linkyard ltd. or Phonemos LLC.
 
 After a user chooses **Connect to Phonemos** on a ticket, or **Connect** on the Phonemos search menu item, the app does the following.
 
@@ -51,8 +51,8 @@ OAuth tokens remain in the customer’s YouTrack until the user disconnects, an 
 
 The rights in section 7 of the [general Phonemos privacy policy](https://wiki.linkyard.cloud/t/0GZPGlFvTqWz9iCCcJtJ2Q/w/GGUEXWYIT3KZ5gKYQ7HfJQ) apply, including access, rectification, erasure, restriction, portability, objection, and the right to lodge a complaint with a supervisory authority.
 
-For data in a customer’s YouTrack or in a Phonemos site the customer operates, contact that organisation first. For Phonemos Cloud, contact [dpo@phonemos.com](mailto:dpo@phonemos.com). The objection address in the general policy is support@linkyard.ch.
+For questions about this app’s notice, contact [support@linkyard.ch](mailto:support@linkyard.ch). For data in a customer’s YouTrack or in a Phonemos site the customer operates, contact that organisation first. For Phonemos Cloud, contact [dpo@phonemos.com](mailto:dpo@phonemos.com).
 
 ## 7 Changes
 
-This notice was first published in October 2026 and updated the same month to cover main-menu search and refresh-token revocation. Phonemos GmbH will update it when the app’s processing changes.
+This notice was first published in October 2026 and updated the same month to cover main-menu search, refresh-token revocation, and the change of publisher to linkyard ltd. linkyard ltd. will update it when the app’s processing changes.
