@@ -28,11 +28,31 @@ export interface InstanceAwareAPILayer extends BaseAPILayer {
   fetchYouTrack: <T = unknown>(relativeURL: string, requestParams?: RequestParams) => Promise<T>;
 }
 
+type AppLocation = {
+  pathname: string;
+  search: string;
+  hash: string;
+};
+
 /*
  * This layer allows plugin to communicate with own backend
  */
 export interface PluginEndpointAPILayer extends InstanceAwareAPILayer {
   fetchApp: <T = unknown>(relativeURL: string, requestParams?: RequestParams & {scope?: boolean}) => Promise<T>;
+  /** Available for full-page widgets (MAIN_MENU_ITEM, ADMINISTRATION_MENU_ITEM). */
+  navigation?: {
+    getAppLocation: () => Promise<AppLocation>;
+    updateAppLocation: (location: Partial<AppLocation>) => Promise<void>;
+    replaceAppLocation: (location: Partial<AppLocation>) => Promise<void>;
+  };
+  /** Available since YouTrack 2026.2 — shared across widgets of the same app. */
+  storage?: {
+    getItem: (key: string) => Promise<string | null>;
+    setItem: (key: string, value: string) => Promise<void>;
+    removeItem: (key: string) => Promise<void>;
+    clear: () => Promise<void>;
+    getKeys: () => Promise<string[]>;
+  };
 }
 
 /*

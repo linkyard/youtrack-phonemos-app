@@ -1,7 +1,7 @@
 {
   "name": "phonemos",
   "title": "Phonemos",
-  "description": "Phonemos integration for YouTrack",
+  "description": "Phonemos knowledge base suggestions for YouTrack Helpdesk",
   "$schema": "https://json.schemastore.org/youtrack-app.json",
   "vendor": {
     "name": "Phonemos GmbH",
@@ -9,18 +9,27 @@
   },
   "icon": "icon.svg",
   "widgets": [
-
     {
-      "key": "hello",
-      "name": "Hello",
-      "indexPath": "hello/index.html",
+      "key": "suggested-kb",
+      "name": "Suggested knowledge base articles",
+      "indexPath": "suggested-kb/index.html",
       "extensionPoint": "ISSUE_BELOW_SUMMARY",
-      "iconPath": "hello/widget-icon.svg",
-      "description": "Hello world",
+      "iconPath": "suggested-kb/widget-icon.svg",
+      "description": "Suggests Phonemos articles for the current helpdesk ticket",
+      "permissions": ["READ_ISSUE"],
       "expectedDimensions": {
         "width": 640,
-        "height": 64
+        "height": 220
       }
+    },
+    {
+      "key": "oauth-callback",
+      "name": "Phonemos sign-in",
+      "indexPath": "oauth-callback/index.html",
+      "extensionPoint": "MAIN_MENU_ITEM",
+      "iconPath": "oauth-callback/widget-icon.svg",
+      "description": "OAuth redirect target for Phonemos sign-in",
+      "showHeader": false
     }
   ]
 }

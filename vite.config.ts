@@ -17,6 +17,14 @@ export default defineConfig({
           dest: '.'
         },
         {
+          src: '../settings.json',
+          dest: '.'
+        },
+        {
+          src: '../entity-extensions.json',
+          dest: '.'
+        },
+        {
           src: '*.*',
           dest: '.'
         },
@@ -48,9 +56,8 @@ export default defineConfig({
     assetsDir: 'widgets/assets',
     rollupOptions: {
       input: {
-        // List every widget entry point here
-        hello: resolve(__dirname, 'src/widgets/hello/index.html'),
-
+        'suggested-kb': resolve(__dirname, 'src/widgets/suggested-kb/index.html'),
+        'oauth-callback': resolve(__dirname, 'src/widgets/oauth-callback/index.html'),
       }
     }
   }

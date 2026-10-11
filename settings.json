@@ -1,0 +1,75 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "title": "Phonemos",
+  "description": "Connect YouTrack Helpdesk to a Phonemos knowledge base. OAuth settings are global; the search root can differ per project.",
+  "properties": {
+    "phonemosBaseUrl": {
+      "title": "Phonemos base URL",
+      "description": "Base URL of the Phonemos instance, e.g. https://wiki.example.com",
+      "type": "string",
+      "minLength": 1,
+      "x-scope": "GLOBAL"
+    },
+    "oauthClientId": {
+      "title": "OAuth client ID",
+      "description": "Confidential Keycloak client ID registered for this YouTrack app",
+      "type": "string",
+      "minLength": 1,
+      "x-scope": "GLOBAL"
+    },
+    "oauthClientSecret": {
+      "title": "OAuth client secret",
+      "description": "Confidential Keycloak client secret",
+      "type": "string",
+      "format": "secret",
+      "x-scope": "GLOBAL"
+    },
+    "oauthAuthorizationUrl": {
+      "title": "OAuth authorization URL",
+      "description": "Keycloak authorization endpoint, e.g. …/protocol/openid-connect/auth",
+      "type": "string",
+      "minLength": 1,
+      "x-scope": "GLOBAL"
+    },
+    "oauthTokenUrl": {
+      "title": "OAuth token URL",
+      "description": "Keycloak token endpoint, e.g. …/protocol/openid-connect/token",
+      "type": "string",
+      "minLength": 1,
+      "x-scope": "GLOBAL"
+    },
+    "oauthRedirectUri": {
+      "title": "OAuth redirect URI",
+      "description": "Must match Keycloak Valid redirect URIs. Prefer https://{youtrack}/api/extensionEndpoints/phonemos/backend/oauth/callback",
+      "type": "string",
+      "minLength": 1,
+      "x-scope": "GLOBAL"
+    },
+    "withinObjectId": {
+      "title": "Phonemos search root object ID",
+      "description": "UUID of the Phonemos site or topic to search within for this YouTrack project",
+      "type": "string",
+      "minLength": 1,
+      "x-scope": "PROJECT"
+    },
+    "searchLimit": {
+      "title": "Max suggestions",
+      "description": "Maximum number of suggested articles to return",
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 20,
+      "default": 5,
+      "x-scope": "PROJECT"
+    }
+  },
+  "required": [
+    "phonemosBaseUrl",
+    "oauthClientId",
+    "oauthClientSecret",
+    "oauthAuthorizationUrl",
+    "oauthTokenUrl",
+    "oauthRedirectUri",
+    "withinObjectId"
+  ]
+}
