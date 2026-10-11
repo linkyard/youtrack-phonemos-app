@@ -3,6 +3,7 @@
  * Issue-scoped suggestions live in suggestions.js (YouTrack forbids mixing scopes in one handler).
  */
 const http = require('@jetbrains/youtrack-scripting-api/http');
+const phonemosSession = require('./phonemos-session');
 
 const OAUTH_POPUP_MESSAGE_TYPE = 'phonemos:oauth';
 const OAUTH_PENDING_TTL_MS = 5 * 60 * 1000;
@@ -65,18 +66,7 @@ function clearPendingResult(ctx, state) {
 }
 
 function currentUserId(ctx) {
-  const user = ctx.currentUser;
-  if (!user) {
-    return null;
-  }
-  // Workflow User often has login but not a usable .id in HTTP handlers.
-  if (user.login) {
-    return String(user.login);
-  }
-  if (user.id != null && String(user.id) !== '') {
-    return String(user.id);
-  }
-  return null;
+  return phonemosSession.currentUserId(ctx);
 }
 
 function readLoginMap(ctx) {
@@ -137,67 +127,16 @@ function clearLogin(ctx, state) {
   writeLoginMap(ctx, map);
 }
 
-function readSessionMap(ctx) {
-  const raw = ctx.globalStorage.extensionProperties.oauthSessions;
-  if (!raw) {
-    return {};
-  }
-  try {
-    const parsed = JSON.parse(String(raw));
-    return parsed && typeof parsed === 'object' ? parsed : {};
-  } catch (e) {
-    return {};
-  }
-}
-
-function writeSessionMap(ctx, map) {
-  ctx.globalStorage.extensionProperties.oauthSessions = JSON.stringify(map);
-}
-
 function readUserTokens(ctx) {
-  const userId = currentUserId(ctx);
-  if (!userId) {
-    return null;
-  }
-  const entry = readSessionMap(ctx)[userId];
-  if (!entry || !entry.accessToken) {
-    return null;
-  }
-  return {
-    accessToken: String(entry.accessToken),
-    refreshToken: entry.refreshToken ? String(entry.refreshToken) : null,
-    expiresAt: entry.expiresAt != null ? Number(entry.expiresAt) : null,
-  };
+  return phonemosSession.readUserTokens(ctx);
 }
 
 function writeUserTokens(ctx, tokens) {
-  const userId = currentUserId(ctx);
-  if (!userId || !tokens || !tokens.accessToken) {
-    return false;
-  }
-  const map = readSessionMap(ctx);
-  map[userId] = {
-    accessToken: String(tokens.accessToken),
-    refreshToken: tokens.refreshToken ? String(tokens.refreshToken) : null,
-    expiresAt: tokens.expiresAt != null ? Number(tokens.expiresAt) : null,
-    ts: Date.now(),
-  };
-  writeSessionMap(ctx, map);
-  return true;
+  return phonemosSession.writeUserTokens(ctx, tokens);
 }
 
 function clearUserTokens(ctx) {
-  const userId = currentUserId(ctx);
-  if (!userId) {
-    return false;
-  }
-  const map = readSessionMap(ctx);
-  if (!map[userId]) {
-    return true;
-  }
-  delete map[userId];
-  writeSessionMap(ctx, map);
-  return true;
+  return phonemosSession.clearUserTokens(ctx);
 }
 
 function tokensFromMappedResponse(mapped) {

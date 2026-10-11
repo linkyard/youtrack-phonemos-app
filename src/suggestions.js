@@ -3,6 +3,7 @@
  * Global OAuth endpoints live in backend.js (YouTrack forbids mixing scopes in one handler).
  */
 const http = require('@jetbrains/youtrack-scripting-api/http');
+const phonemosSession = require('./phonemos-session');
 
 const MAX_QUERY_CHARS = 3500;
 const DEFAULT_SEARCH_LIMIT = 5;
@@ -11,15 +12,19 @@ function trimTrailingSlash(url) {
   return String(url || '').replace(/\/+$/, '');
 }
 
+function trimSetting(value) {
+  return value == null ? value : String(value).trim();
+}
+
 function requireSettings(ctx) {
   const s = ctx.settings || {};
   return {
     phonemosBaseUrl: trimTrailingSlash(s.phonemosBaseUrl),
-    oauthClientId: s.oauthClientId,
-    oauthClientSecret: s.oauthClientSecret,
-    oauthAuthorizationUrl: s.oauthAuthorizationUrl,
-    oauthTokenUrl: s.oauthTokenUrl,
-    oauthRedirectUri: s.oauthRedirectUri,
+    oauthClientId: trimSetting(s.oauthClientId),
+    oauthClientSecret: trimSetting(s.oauthClientSecret),
+    oauthAuthorizationUrl: trimSetting(s.oauthAuthorizationUrl),
+    oauthTokenUrl: trimSetting(s.oauthTokenUrl),
+    oauthRedirectUri: trimSetting(s.oauthRedirectUri),
     withinObjectId: normalizeWithinObjectId(s.withinObjectId),
     withinObjectIdRaw: s.withinObjectId == null ? '' : String(s.withinObjectId).trim(),
     searchLimit: s.searchLimit,
@@ -480,13 +485,17 @@ exports.httpHandler = {
           });
         }
 
-        const body = ctx.request.json() || {};
-        if (!body.accessToken) {
+        // Ignore any client-supplied accessToken — always use the server-side session
+        // for the current YouTrack user (prevents token substitution / proxy abuse).
+        const session = phonemosSession.ensureAccessToken(ctx, settings);
+        if (!session.ok) {
           return ctx.response.json({
             success: false,
-            message: 'accessToken is required.',
+            needsAuth: true,
+            message: session.message || 'Connect to Phonemos first.',
           });
         }
+        const accessToken = session.accessToken;
 
         const queries = buildSearchQueries(ctx.issue);
         if (!queries.length) {
@@ -500,7 +509,7 @@ exports.httpHandler = {
           });
         }
 
-        const result = runSearchStrategies(settings, body.accessToken, queries);
+        const result = runSearchStrategies(settings, accessToken, queries);
         if (!result.success) {
           const err = result.lastError || {};
           let message =
@@ -508,17 +517,19 @@ exports.httpHandler = {
             err.code +
             (err.body ? ': ' + err.body : '.');
           if (err.code === 401 || /unauthorized|invalid.?bearer|invalid.?token/i.test(String(err.body || ''))) {
+            phonemosSession.clearUserTokens(ctx);
             message +=
               '\n\nPhonemos rejected the access token. In Keycloak, open this app’s client → Client scopes ' +
               'and assign the realm scope "hasura" as Default (it adds the Hasura claims Phonemos requires). ' +
               'Also request scope "hasura" (app setting OAuth scopes). Then disconnect/reconnect in the widget.';
-            const claimHint = describeAccessTokenClaims(body.accessToken);
+            const claimHint = describeAccessTokenClaims(accessToken);
             if (claimHint) {
               message += '\n\nToken debug: ' + claimHint;
             }
           }
           return ctx.response.json({
             success: false,
+            needsAuth: err.code === 401,
             message: message,
             attempts: result.attempts || [],
             within: settings.withinObjectId,

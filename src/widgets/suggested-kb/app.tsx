@@ -40,6 +40,7 @@ type SearchAttempt = {
 type SuggestionsResponse = {
   success: boolean;
   message?: string;
+  needsAuth?: boolean;
   mode?: string;
   query?: string;
   queryLabel?: string;
@@ -64,6 +65,7 @@ const AppComponent: React.FunctionComponent = () => {
     setError(null);
     setDebug(null);
     try {
+      // Ensure a server-side session exists; the access token itself stays on the backend.
       const tokens = await ensurePhonemosTokens(host);
       if (!tokens) {
         setStatus('needs-auth');
@@ -72,13 +74,20 @@ const AppComponent: React.FunctionComponent = () => {
       const response = await host.fetchApp<SuggestionsResponse>('suggestions/list', {
         method: 'POST',
         scope: true,
-        body: {accessToken: tokens.accessToken},
+        body: {},
       });
       if (!response.success) {
-        // Keep the error visible (do not silently bounce to Connect). Clear the
-        // session so the next Connect picks up a new token after Keycloak fixes.
-        if (/401|403|unauthorized|invalid.?token|invalid.?bearer/i.test(response.message || '')) {
+        if (
+          response.needsAuth ||
+          /401|403|unauthorized|invalid.?token|invalid.?bearer|connect to phonemos/i.test(
+            response.message || '',
+          )
+        ) {
           await clearPhonemosSession(host);
+          if (response.needsAuth && /connect to phonemos first/i.test(response.message || '')) {
+            setStatus('needs-auth');
+            return;
+          }
           setError(response.message || 'Phonemos rejected the access token.');
           setStatus('error');
           return;
