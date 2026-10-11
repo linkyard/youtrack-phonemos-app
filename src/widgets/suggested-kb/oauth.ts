@@ -5,11 +5,15 @@ type HostAPI = Awaited<ReturnType<typeof YTApp.register>>;
 
 export {deriveOAuthCallbackUrl, getRedirectDebugInfo, resolveOAuthRedirectUri};
 
-export type PhonemosTokens = {
-  accessToken: string;
+/** Browser-visible session flag — access/refresh tokens never leave the YouTrack backend. */
+export type PhonemosSession = {
+  connected: true;
   expiresAt: number | null;
   canRefresh?: boolean;
 };
+
+/** @deprecated use PhonemosSession */
+export type PhonemosTokens = PhonemosSession;
 
 type OAuthConfig = {
   success: boolean;
@@ -23,8 +27,7 @@ type OAuthConfig = {
 type TokenResponse = {
   success: boolean;
   message?: string;
-  accessToken?: string;
-  expiresIn?: number | null;
+  connected?: boolean;
   expiresAt?: number | null;
   canRefresh?: boolean;
 };
@@ -32,13 +35,12 @@ type TokenResponse = {
 type SessionResponse = {
   success: boolean;
   connected?: boolean;
-  accessToken?: string;
   expiresAt?: number | null;
   canRefresh?: boolean;
   message?: string;
 };
 
-let memoryTokens: PhonemosTokens | null = null;
+let memorySession: PhonemosSession | null = null;
 
 function toBase64Url(buffer: ArrayBuffer): string {
   const bytes = new Uint8Array(buffer);
@@ -61,37 +63,31 @@ async function pkceChallenge(verifier: string): Promise<string> {
   return toBase64Url(digest);
 }
 
-function tokensFromResponse(response: TokenResponse | SessionResponse): PhonemosTokens | null {
-  if (!response.success || !('accessToken' in response) || !response.accessToken) {
+function sessionFromResponse(response: TokenResponse | SessionResponse): PhonemosSession | null {
+  if (!response.success || !response.connected) {
     return null;
   }
-  const expiresAt =
-    response.expiresAt != null
-      ? Number(response.expiresAt)
-      : 'expiresIn' in response && response.expiresIn
-        ? Date.now() + Number(response.expiresIn) * 1000 - 30_000
-        : null;
   return {
-    accessToken: response.accessToken,
-    expiresAt,
+    connected: true,
+    expiresAt: response.expiresAt != null ? Number(response.expiresAt) : null,
     canRefresh: Boolean(response.canRefresh),
   };
 }
 
-function isExpired(tokens: PhonemosTokens): boolean {
-  return Boolean(tokens.expiresAt && tokens.expiresAt <= Date.now());
+function isExpired(session: PhonemosSession): boolean {
+  return Boolean(session.expiresAt && session.expiresAt <= Date.now());
 }
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => window.setTimeout(resolve, ms));
 }
 
-export function getMemoryTokens(): PhonemosTokens | null {
-  return memoryTokens;
+export function getMemoryTokens(): PhonemosSession | null {
+  return memorySession;
 }
 
 export async function clearPhonemosSession(host: HostAPI): Promise<void> {
-  memoryTokens = null;
+  memorySession = null;
   try {
     await fetchAppOrThrow(host, 'backend/oauth/logout', {method: 'POST', body: {}});
   } catch {
@@ -101,31 +97,30 @@ export async function clearPhonemosSession(host: HostAPI): Promise<void> {
 
 /** @deprecated use clearPhonemosSession */
 export function clearMemoryTokens(): void {
-  memoryTokens = null;
+  memorySession = null;
 }
 
-async function refreshServerSession(host: HostAPI): Promise<PhonemosTokens | null> {
-  // Refresh token never leaves the YouTrack backend — empty body is enough.
+async function refreshServerSession(host: HostAPI): Promise<PhonemosSession | null> {
   const refreshed = await fetchAppOrThrow<TokenResponse>(host, 'backend/oauth/refresh', {
     method: 'POST',
     body: {},
   });
-  const next = tokensFromResponse(refreshed);
+  const next = sessionFromResponse(refreshed);
   if (next) {
-    memoryTokens = next;
+    memorySession = next;
     return next;
   }
   return null;
 }
 
-async function fetchSession(host: HostAPI): Promise<PhonemosTokens | null> {
+async function fetchSession(host: HostAPI): Promise<PhonemosSession | null> {
   const session = await fetchAppOrThrow<SessionResponse>(host, 'backend/oauth/session', {method: 'GET'});
   if (!session.success || !session.connected) {
     return null;
   }
-  const fromSession = tokensFromResponse(session);
+  const fromSession = sessionFromResponse(session);
   if (fromSession && !isExpired(fromSession)) {
-    memoryTokens = fromSession;
+    memorySession = fromSession;
     return fromSession;
   }
   if (session.canRefresh || fromSession?.canRefresh) {
@@ -134,21 +129,21 @@ async function fetchSession(host: HostAPI): Promise<PhonemosTokens | null> {
   return null;
 }
 
-export async function loadPhonemosSession(host: HostAPI): Promise<PhonemosTokens | null> {
-  if (memoryTokens?.accessToken && !isExpired(memoryTokens)) {
-    return memoryTokens;
+export async function loadPhonemosSession(host: HostAPI): Promise<PhonemosSession | null> {
+  if (memorySession?.connected && !isExpired(memorySession)) {
+    return memorySession;
   }
 
   try {
-    const tokens = await fetchSession(host);
-    if (tokens) {
-      return tokens;
+    const session = await fetchSession(host);
+    if (session) {
+      return session;
     }
   } catch {
     // Fall through — treat as signed out.
   }
 
-  memoryTokens = null;
+  memorySession = null;
   return null;
 }
 
@@ -156,7 +151,7 @@ export async function loadPhonemosSession(host: HostAPI): Promise<PhonemosTokens
  * Restore a stored session (and refresh if needed). Does not open the OAuth popup.
  * Returns null when the user still needs to connect.
  */
-export async function ensurePhonemosTokens(host: HostAPI): Promise<PhonemosTokens | null> {
+export async function ensurePhonemosTokens(host: HostAPI): Promise<PhonemosSession | null> {
   return loadPhonemosSession(host);
 }
 
@@ -254,7 +249,7 @@ async function waitForSession(
   host: HostAPI,
   popup: Window | null,
   timeoutMs = 5 * 60 * 1000,
-): Promise<PhonemosTokens> {
+): Promise<PhonemosSession> {
   const started = Date.now();
   let sawClosed = false;
   let closedAt = 0;
@@ -264,14 +259,14 @@ async function waitForSession(
   while (Date.now() - started < timeoutMs) {
     polls += 1;
     try {
-      const tokens = await fetchSession(host);
-      if (tokens) {
+      const session = await fetchSession(host);
+      if (session) {
         try {
           popup?.close();
         } catch {
           // ignore
         }
-        return tokens;
+        return session;
       }
     } catch (e) {
       lastSessionError = errorText(e);
@@ -313,14 +308,14 @@ async function waitForSession(
   );
 }
 
-export async function connectPhonemos(host: HostAPI): Promise<PhonemosTokens> {
+export async function connectPhonemos(host: HostAPI): Promise<PhonemosSession> {
   const debug: string[] = [];
   const pushDebug = (line: string) => {
     debug.push(line);
   };
 
   try {
-    memoryTokens = null;
+    memorySession = null;
     await clearPublishedOAuthResult(host);
 
     const config = await fetchAppOrThrow<OAuthConfig>(host, 'backend/oauth/config', {method: 'GET'});
@@ -343,8 +338,6 @@ export async function connectPhonemos(host: HostAPI): Promise<PhonemosTokens> {
     const codeVerifier = randomUrlSafe(32);
     const codeChallenge = await pkceChallenge(codeVerifier);
     pushDebug(`statePrefix=${state.slice(0, 8)}…`);
-    pushDebug(`codeVerifierLen=${codeVerifier.length}`);
-    pushDebug(`codeChallengeLen=${codeChallenge.length}`);
 
     const authorize = await fetchAppOrThrow<{success: boolean; message?: string; url?: string}>(
       host,
@@ -376,7 +369,6 @@ export async function connectPhonemos(host: HostAPI): Promise<PhonemosTokens> {
       throw new Error(['Pop-up blocked. Allow pop-ups for YouTrack to connect Phonemos.', ...debug].join('\n'));
     }
 
-    // Some browsers return a Window that is already closed when the pop-up is blocked.
     await sleep(300);
     pushDebug(`popupClosedAfter300ms=${String(popup.closed)}`);
     if (popup.closed) {
@@ -390,20 +382,20 @@ export async function connectPhonemos(host: HostAPI): Promise<PhonemosTokens> {
     let settled = false;
     const pathErrors: {path: string; error: string}[] = [];
 
-    const viaSession = waitForSession(host, popup).then((tokens) => {
+    const viaSession = waitForSession(host, popup).then((session) => {
       settled = true;
-      return tokens;
+      return session;
     });
 
     const viaCode = (async () => {
       const code = await waitForOAuthResult(host, state, popup);
       pushDebug(`codePath: got code len=${String(code).length}`);
       if (settled) {
-        const tokens = await fetchSession(host);
-        if (!tokens) {
+        const session = await fetchSession(host);
+        if (!session) {
           throw new Error('code-path: session missing after OAuth code handoff (session-path already settled).');
         }
-        return tokens;
+        return session;
       }
       const tokenResponse = await fetchAppOrThrow<TokenResponse>(host, 'backend/oauth/token', {
         method: 'POST',
@@ -413,22 +405,22 @@ export async function connectPhonemos(host: HostAPI): Promise<PhonemosTokens> {
           redirect_uri: redirectUri,
         },
       });
-      const tokens = tokensFromResponse(tokenResponse);
-      if (!tokens) {
-        throw new Error(tokenResponse.message || 'code-path: token exchange failed (no access token).');
+      const session = sessionFromResponse(tokenResponse);
+      if (!session) {
+        throw new Error(tokenResponse.message || 'code-path: token exchange failed.');
       }
-      memoryTokens = tokens;
+      memorySession = session;
       settled = true;
       try {
         popup.close();
       } catch {
         // ignore
       }
-      return tokens;
+      return session;
     })();
 
     try {
-      return await new Promise<PhonemosTokens>((resolve, reject) => {
+      return await new Promise<PhonemosSession>((resolve, reject) => {
         let failures = 0;
         const onFail = (path: string, error: unknown) => {
           pathErrors.push({path, error: formatUnknownError(error)});
@@ -446,7 +438,7 @@ export async function connectPhonemos(host: HostAPI): Promise<PhonemosTokens> {
         const session = await fetchAppOrThrow<SessionResponse>(host, 'backend/oauth/session', {method: 'GET'});
         sessionSnapshot =
           `sessionSuccess=${String(session.success)} connected=${String(!!session.connected)} ` +
-          `hasAccessToken=${String(!!session.accessToken)} canRefresh=${String(!!session.canRefresh)}`;
+          `canRefresh=${String(!!session.canRefresh)}`;
       } catch (sessionError) {
         sessionSnapshot = `sessionSnapshotError=${formatUnknownError(sessionError)}`;
       }

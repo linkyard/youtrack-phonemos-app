@@ -94,8 +94,10 @@ If every strategy returns zero hits, the widget shows the query/`within` UUID an
 
 1. Widget opens a Keycloak authorize popup (PKCE).
 2. Callback page finishes via authenticated `oauth/complete` and notifies the same-origin opener (`postMessage` with a concrete origin — not `*`, BroadcastChannel, or `localStorage`).
-3. YouTrack HTTP handler exchanges the code using the client secret and stores tokens **server-side on the YouTrack User** (`phonemosOAuthSession` extension property). Refresh tokens never leave the YouTrack backend and are not kept in a shared app-wide blob.
+3. YouTrack HTTP handler exchanges the code using the client secret and stores tokens **server-side on the YouTrack User** (`phonemosOAuthSession`). Access and refresh tokens never leave the YouTrack backend; the widget only sees `{connected: true}`.
 4. Suggestions are loaded via an issue-scoped handler that uses the **server-stored** access token for the current YouTrack user (the widget never sends a Bearer token). Phonemos still enforces that user’s permissions.
+
+OAuth endpoints reject guest users and rate-limit sign-in attempts per YouTrack user. Search tries a short hybrid/fulltext fallback chain (max 5 Phonemos calls) instead of a full strategy matrix.
 
 Shared SSO (YouTrack and Phonemos on the same Keycloak) makes reconnects nearly silent; otherwise users sign in to Phonemos once per browser session.
 

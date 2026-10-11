@@ -7,125 +7,29 @@ const phonemosSession = require('./phonemos-session');
 const urlSafety = require('./url-safety');
 
 const OAUTH_POPUP_MESSAGE_TYPE = 'phonemos:oauth';
-const OAUTH_PENDING_TTL_MS = 5 * 60 * 1000;
 
 function trimTrailingSlash(url) {
   return String(url || '').replace(/\/+$/, '');
 }
 
-function readPendingMap(ctx) {
-  const raw = ctx.globalStorage.extensionProperties.oauthPending;
-  if (!raw) {
-    return {};
-  }
-  try {
-    const parsed = JSON.parse(String(raw));
-    return parsed && typeof parsed === 'object' ? parsed : {};
-  } catch (e) {
-    return {};
-  }
-}
-
-function writePendingMap(ctx, map) {
-  ctx.globalStorage.extensionProperties.oauthPending = JSON.stringify(map);
-}
-
-function prunePendingMap(map, now) {
-  Object.keys(map).forEach(function (key) {
-    const entry = map[key];
-    if (!entry || !entry.ts || now - Number(entry.ts) > OAUTH_PENDING_TTL_MS) {
-      delete map[key];
-    }
-  });
-  return map;
-}
-
 function storePendingResult(ctx, state, code, error) {
-  const userId = currentUserId(ctx);
-  if (!state || !userId || !(code || error)) {
-    return false;
-  }
-  const now = Date.now();
-  const map = prunePendingMap(readPendingMap(ctx), now);
-  map[String(state)] = {
-    code: code || null,
-    error: error || null,
-    userId: userId,
-    ts: now,
-  };
-  writePendingMap(ctx, map);
-  return true;
+  return phonemosSession.storePendingResult(ctx, state, code, error);
 }
 
 function clearPendingResult(ctx, state) {
-  if (!state) {
-    return;
-  }
-  const map = prunePendingMap(readPendingMap(ctx), Date.now());
-  delete map[String(state)];
-  writePendingMap(ctx, map);
-}
-
-function currentUserId(ctx) {
-  return phonemosSession.currentUserId(ctx);
-}
-
-function readLoginMap(ctx) {
-  const raw = ctx.globalStorage.extensionProperties.oauthLogins;
-  if (!raw) {
-    return {};
-  }
-  try {
-    const parsed = JSON.parse(String(raw));
-    return parsed && typeof parsed === 'object' ? parsed : {};
-  } catch (e) {
-    return {};
-  }
-}
-
-function writeLoginMap(ctx, map) {
-  ctx.globalStorage.extensionProperties.oauthLogins = JSON.stringify(map);
+  return phonemosSession.clearPendingResult(ctx, state);
 }
 
 function storeLogin(ctx, state, codeVerifier, redirectUri) {
-  const userId = currentUserId(ctx);
-  if (!state || !userId || !codeVerifier || !redirectUri) {
-    return false;
-  }
-  const now = Date.now();
-  const map = prunePendingMap(readLoginMap(ctx), now);
-  map[String(state)] = {
-    userId: userId,
-    codeVerifier: String(codeVerifier),
-    redirectUri: String(redirectUri),
-    ts: now,
-  };
-  writeLoginMap(ctx, map);
-  return true;
+  return phonemosSession.storeLogin(ctx, state, codeVerifier, redirectUri);
 }
 
 function readLogin(ctx, state) {
-  const userId = currentUserId(ctx);
-  if (!state || !userId) {
-    return null;
-  }
-  const entry = readLoginMap(ctx)[String(state)];
-  if (!entry || String(entry.userId) !== userId) {
-    return null;
-  }
-  if (!entry.ts || Date.now() - Number(entry.ts) > OAUTH_PENDING_TTL_MS) {
-    return null;
-  }
-  return entry;
+  return phonemosSession.readLogin(ctx, state);
 }
 
 function clearLogin(ctx, state) {
-  if (!state) {
-    return;
-  }
-  const map = prunePendingMap(readLoginMap(ctx), Date.now());
-  delete map[String(state)];
-  writeLoginMap(ctx, map);
+  return phonemosSession.clearLogin(ctx, state);
 }
 
 function readUserTokens(ctx) {
@@ -140,6 +44,15 @@ function clearUserTokens(ctx) {
   return phonemosSession.clearUserTokens(ctx);
 }
 
+function rejectIfUnauthorized(ctx) {
+  return phonemosSession.requireInteractiveUser(ctx);
+}
+
+function rejectIfRateLimited(ctx) {
+  const rate = phonemosSession.consumeOAuthRateLimit(ctx);
+  return rate.ok ? null : rate.message;
+}
+
 function tokensFromMappedResponse(mapped) {
   if (!mapped || !mapped.success || !mapped.accessToken) {
     return null;
@@ -151,7 +64,19 @@ function tokensFromMappedResponse(mapped) {
   };
 }
 
-/** Strip refresh tokens before sending token responses to the browser. */
+/** Session/token API responses never include access or refresh tokens. */
+function publicSessionResponse(tokens) {
+  if (!tokens) {
+    return {success: true, connected: false};
+  }
+  return {
+    success: true,
+    connected: true,
+    expiresAt: tokens.expiresAt != null ? tokens.expiresAt : null,
+    canRefresh: !!tokens.refreshToken,
+  };
+}
+
 function publicTokenResponse(mapped) {
   if (!mapped || typeof mapped !== 'object') {
     return mapped;
@@ -159,10 +84,8 @@ function publicTokenResponse(mapped) {
   return {
     success: mapped.success,
     message: mapped.message,
-    accessToken: mapped.accessToken,
-    expiresIn: mapped.expiresIn,
-    expiresAt: mapped.expiresAt,
-    tokenType: mapped.tokenType,
+    connected: !!mapped.success,
+    expiresAt: mapped.expiresAt != null ? mapped.expiresAt : null,
     canRefresh: mapped.success ? true : undefined,
   };
 }
@@ -298,6 +221,10 @@ exports.httpHandler = {
       method: 'GET',
       path: 'oauth/config',
       handle: function handle(ctx) {
+        const authError = rejectIfUnauthorized(ctx);
+        if (authError) {
+          return ctx.response.json({success: false, message: authError});
+        }
         const settings = requireSettings(ctx);
         const missing = missingSettings(settings, [
           'phonemosBaseUrl',
@@ -330,11 +257,19 @@ exports.httpHandler = {
     },
     {
       scope: 'global',
-      // POST required: storing the PKCE verifier writes app global storage.
+      // POST required: storing the PKCE verifier writes user extension properties.
       // YouTrack forbids database modifications from GET extension endpoints.
       method: 'POST',
       path: 'oauth/authorize-url',
       handle: function handle(ctx) {
+        const authError = rejectIfUnauthorized(ctx);
+        if (authError) {
+          return ctx.response.json({success: false, message: authError});
+        }
+        const rateError = rejectIfRateLimited(ctx);
+        if (rateError) {
+          return ctx.response.json({success: false, message: rateError});
+        }
         const settings = requireSettings(ctx);
         const missing = missingSettings(settings, [
           'oauthClientId',
@@ -376,18 +311,9 @@ exports.httpHandler = {
           });
         }
         if (!storeLogin(ctx, state, codeVerifier, redirectUri)) {
-          const user = ctx.currentUser;
           return ctx.response.json({
             success: false,
-            message:
-              'Unable to start OAuth login — no YouTrack user key on this request ' +
-              '(currentUser=' +
-              (user ? 'yes' : 'no') +
-              ', login=' +
-              (user && user.login ? String(user.login) : '') +
-              ', id=' +
-              (user && user.id != null ? String(user.id) : '') +
-              ').',
+            message: 'Unable to start OAuth login for the current YouTrack user.',
           });
         }
         const params = [
@@ -414,6 +340,14 @@ exports.httpHandler = {
       method: 'POST',
       path: 'oauth/complete',
       handle: function handle(ctx) {
+        const authError = rejectIfUnauthorized(ctx);
+        if (authError) {
+          return ctx.response.json({success: false, message: authError});
+        }
+        const rateError = rejectIfRateLimited(ctx);
+        if (rateError) {
+          return ctx.response.json({success: false, message: rateError});
+        }
         const body = ctx.request.json() || {};
         const state = body.state;
         const code = body.code || null;
@@ -425,7 +359,7 @@ exports.httpHandler = {
           return ctx.response.json({success: false, message: 'code or error is required.'});
         }
 
-        // Always stash the raw result so a surviving parent widget can finish.
+        // Stash on the current user so a surviving parent widget can finish if needed.
         storePendingResult(ctx, state, code, error);
 
         if (error) {
@@ -488,24 +422,18 @@ exports.httpHandler = {
       method: 'GET',
       path: 'oauth/pending',
       handle: function handle(ctx) {
+        const authError = rejectIfUnauthorized(ctx);
+        if (authError) {
+          return ctx.response.json({success: false, message: authError});
+        }
         const state = ctx.request.getParameter('state');
         if (!state) {
           return ctx.response.json({success: false, message: 'state is required.'});
         }
-        const userId = currentUserId(ctx);
-        if (!userId) {
-          return ctx.response.json({success: false, message: 'Not authenticated.'});
-        }
 
-        // Read-only: GET handlers must not write global storage.
-        const entry = readPendingMap(ctx)[String(state)];
+        // Read-only: GET handlers must not write storage.
+        const entry = phonemosSession.readPendingResult(ctx, state);
         if (!entry) {
-          return ctx.response.json({success: true, pending: false});
-        }
-        if (String(entry.userId) !== userId) {
-          return ctx.response.json({success: true, pending: false});
-        }
-        if (!entry.ts || Date.now() - Number(entry.ts) > OAUTH_PENDING_TTL_MS) {
           return ctx.response.json({success: true, pending: false});
         }
 
@@ -524,6 +452,14 @@ exports.httpHandler = {
       method: 'POST',
       path: 'oauth/token',
       handle: function handle(ctx) {
+        const authError = rejectIfUnauthorized(ctx);
+        if (authError) {
+          return ctx.response.json({success: false, message: authError});
+        }
+        const rateError = rejectIfRateLimited(ctx);
+        if (rateError) {
+          return ctx.response.json({success: false, message: rateError});
+        }
         const settings = requireSettings(ctx);
         const missing = missingSettings(settings, [
           'oauthClientId',
@@ -573,6 +509,14 @@ exports.httpHandler = {
       method: 'POST',
       path: 'oauth/refresh',
       handle: function handle(ctx) {
+        const authError = rejectIfUnauthorized(ctx);
+        if (authError) {
+          return ctx.response.json({success: false, message: authError});
+        }
+        const rateError = rejectIfRateLimited(ctx);
+        if (rateError) {
+          return ctx.response.json({success: false, message: rateError});
+        }
         const settings = requireSettings(ctx);
         const missing = missingSettings(settings, [
           'oauthClientId',
@@ -620,19 +564,12 @@ exports.httpHandler = {
       method: 'GET',
       path: 'oauth/session',
       handle: function handle(ctx) {
-        const tokens = readUserTokens(ctx);
-        if (!tokens) {
-          return ctx.response.json({success: true, connected: false});
+        const authError = rejectIfUnauthorized(ctx);
+        if (authError) {
+          return ctx.response.json({success: false, message: authError});
         }
-        // Never return refresh tokens to the browser — they stay server-side only.
-        return ctx.response.json({
-          success: true,
-          connected: true,
-          accessToken: tokens.accessToken,
-          expiresAt: tokens.expiresAt,
-          // Hint that a server-side refresh is available without exposing the token.
-          canRefresh: !!tokens.refreshToken,
-        });
+        // Never return access/refresh tokens to the browser.
+        return ctx.response.json(publicSessionResponse(readUserTokens(ctx)));
       },
     },
     {
@@ -640,7 +577,13 @@ exports.httpHandler = {
       method: 'POST',
       path: 'oauth/logout',
       handle: function handle(ctx) {
+        const authError = rejectIfUnauthorized(ctx);
+        if (authError) {
+          return ctx.response.json({success: false, message: authError});
+        }
         clearUserTokens(ctx);
+        clearLogin(ctx, null);
+        clearPendingResult(ctx, null);
         return ctx.response.json({success: true, connected: false});
       },
     },

@@ -1,9 +1,14 @@
 /**
- * Per-user Phonemos OAuth session storage (User extension property).
- * Falls back to legacy AppGlobalStorage.oauthSessions for one-time migration.
+ * Per-user Phonemos OAuth state (User extension properties).
+ * Tokens, in-flight login, pending code, and rate limits stay off shared AppGlobalStorage.
+ * Legacy global maps are still read once for migration.
  */
 const http = require('@jetbrains/youtrack-scripting-api/http');
 const urlSafety = require('./url-safety');
+
+const OAUTH_TTL_MS = 5 * 60 * 1000;
+const OAUTH_RATE_WINDOW_MS = 10 * 60 * 1000;
+const OAUTH_RATE_MAX = 20;
 
 function currentUserId(ctx) {
   const user = ctx.currentUser;
@@ -27,45 +32,75 @@ function userExtensionProperties(ctx) {
   return user.extensionProperties;
 }
 
-function parseTokenEntry(raw) {
+/** Reject guest / missing users before OAuth work that hits Keycloak. */
+function requireInteractiveUser(ctx) {
+  const user = ctx.currentUser;
+  if (!user) {
+    return 'Not authenticated.';
+  }
+  const login = user.login ? String(user.login) : '';
+  if (user.isGuest === true || login === 'guest' || login === 'Guest') {
+    return 'Guest users cannot connect to Phonemos.';
+  }
+  if (!currentUserId(ctx)) {
+    return 'Not authenticated.';
+  }
+  return null;
+}
+
+function parseJsonObject(raw) {
   if (!raw) {
     return null;
   }
   try {
     const parsed = typeof raw === 'string' ? JSON.parse(raw) : raw;
-    if (!parsed || typeof parsed !== 'object' || !parsed.accessToken) {
-      return null;
-    }
-    return {
-      accessToken: String(parsed.accessToken),
-      refreshToken: parsed.refreshToken ? String(parsed.refreshToken) : null,
-      expiresAt: parsed.expiresAt != null ? Number(parsed.expiresAt) : null,
-    };
+    return parsed && typeof parsed === 'object' ? parsed : null;
   } catch (e) {
     return null;
   }
 }
 
-function readLegacySessionMap(ctx) {
-  const raw = ctx.globalStorage && ctx.globalStorage.extensionProperties
-    ? ctx.globalStorage.extensionProperties.oauthSessions
-    : null;
+function parseTokenEntry(raw) {
+  const parsed = parseJsonObject(raw);
+  if (!parsed || !parsed.accessToken) {
+    return null;
+  }
+  return {
+    accessToken: String(parsed.accessToken),
+    refreshToken: parsed.refreshToken ? String(parsed.refreshToken) : null,
+    expiresAt: parsed.expiresAt != null ? Number(parsed.expiresAt) : null,
+  };
+}
+
+function readLegacyMap(ctx, propertyName) {
+  const raw =
+    ctx.globalStorage && ctx.globalStorage.extensionProperties
+      ? ctx.globalStorage.extensionProperties[propertyName]
+      : null;
   if (!raw) {
     return {};
   }
-  try {
-    const parsed = JSON.parse(String(raw));
-    return parsed && typeof parsed === 'object' ? parsed : {};
-  } catch (e) {
-    return {};
-  }
+  const parsed = parseJsonObject(raw);
+  return parsed || {};
 }
 
-function writeLegacySessionMap(ctx, map) {
+function writeLegacyMap(ctx, propertyName, map) {
   if (!ctx.globalStorage || !ctx.globalStorage.extensionProperties) {
     return;
   }
-  ctx.globalStorage.extensionProperties.oauthSessions = JSON.stringify(map);
+  ctx.globalStorage.extensionProperties[propertyName] = JSON.stringify(map);
+}
+
+function clearLegacyMapEntry(ctx, propertyName, key) {
+  if (!key) {
+    return;
+  }
+  const map = readLegacyMap(ctx, propertyName);
+  if (!map[key]) {
+    return;
+  }
+  delete map[key];
+  writeLegacyMap(ctx, propertyName, map);
 }
 
 function readLegacyUserTokens(ctx) {
@@ -73,20 +108,14 @@ function readLegacyUserTokens(ctx) {
   if (!userId) {
     return null;
   }
-  return parseTokenEntry(readLegacySessionMap(ctx)[userId]);
+  return parseTokenEntry(readLegacyMap(ctx, 'oauthSessions')[userId]);
 }
 
 function clearLegacyUserTokens(ctx) {
   const userId = currentUserId(ctx);
-  if (!userId || !ctx.globalStorage || !ctx.globalStorage.extensionProperties) {
-    return;
+  if (userId) {
+    clearLegacyMapEntry(ctx, 'oauthSessions', userId);
   }
-  const map = readLegacySessionMap(ctx);
-  if (!map[userId]) {
-    return;
-  }
-  delete map[userId];
-  writeLegacySessionMap(ctx, map);
 }
 
 function readUserTokens(ctx) {
@@ -111,7 +140,6 @@ function writeUserTokens(ctx, tokens) {
     expiresAt: tokens.expiresAt != null ? Number(tokens.expiresAt) : null,
     ts: Date.now(),
   });
-  // Drop this user's entry from the shared legacy blob if present.
   clearLegacyUserTokens(ctx);
   return true;
 }
@@ -123,6 +151,178 @@ function clearUserTokens(ctx) {
   }
   clearLegacyUserTokens(ctx);
   return !!props || !!currentUserId(ctx);
+}
+
+function storeLogin(ctx, state, codeVerifier, redirectUri) {
+  const props = userExtensionProperties(ctx);
+  if (!props || !state || !codeVerifier || !redirectUri) {
+    return false;
+  }
+  props.phonemosOAuthLogin = JSON.stringify({
+    state: String(state),
+    codeVerifier: String(codeVerifier),
+    redirectUri: String(redirectUri),
+    ts: Date.now(),
+  });
+  clearLegacyMapEntry(ctx, 'oauthLogins', String(state));
+  return true;
+}
+
+function readLogin(ctx, state) {
+  if (!state) {
+    return null;
+  }
+  const props = userExtensionProperties(ctx);
+  if (props) {
+    const entry = parseJsonObject(props.phonemosOAuthLogin);
+    if (
+      entry &&
+      String(entry.state) === String(state) &&
+      entry.codeVerifier &&
+      entry.redirectUri &&
+      entry.ts &&
+      Date.now() - Number(entry.ts) <= OAUTH_TTL_MS
+    ) {
+      return {
+        codeVerifier: String(entry.codeVerifier),
+        redirectUri: String(entry.redirectUri),
+        ts: Number(entry.ts),
+      };
+    }
+  }
+
+  const userId = currentUserId(ctx);
+  const legacy = readLegacyMap(ctx, 'oauthLogins')[String(state)];
+  if (
+    legacy &&
+    userId &&
+    String(legacy.userId) === userId &&
+    legacy.codeVerifier &&
+    legacy.redirectUri &&
+    legacy.ts &&
+    Date.now() - Number(legacy.ts) <= OAUTH_TTL_MS
+  ) {
+    return {
+      codeVerifier: String(legacy.codeVerifier),
+      redirectUri: String(legacy.redirectUri),
+      ts: Number(legacy.ts),
+    };
+  }
+  return null;
+}
+
+function clearLogin(ctx, state) {
+  const props = userExtensionProperties(ctx);
+  if (props) {
+    const entry = parseJsonObject(props.phonemosOAuthLogin);
+    if (!state || (entry && String(entry.state) === String(state))) {
+      props.phonemosOAuthLogin = null;
+    }
+  }
+  if (state) {
+    clearLegacyMapEntry(ctx, 'oauthLogins', String(state));
+  }
+}
+
+function storePendingResult(ctx, state, code, error) {
+  const props = userExtensionProperties(ctx);
+  if (!props || !state || !(code || error)) {
+    return false;
+  }
+  props.phonemosOAuthPending = JSON.stringify({
+    state: String(state),
+    code: code || null,
+    error: error || null,
+    ts: Date.now(),
+  });
+  clearLegacyMapEntry(ctx, 'oauthPending', String(state));
+  return true;
+}
+
+function readPendingResult(ctx, state) {
+  if (!state) {
+    return null;
+  }
+  const props = userExtensionProperties(ctx);
+  if (props) {
+    const entry = parseJsonObject(props.phonemosOAuthPending);
+    if (
+      entry &&
+      String(entry.state) === String(state) &&
+      entry.ts &&
+      Date.now() - Number(entry.ts) <= OAUTH_TTL_MS
+    ) {
+      return {
+        code: entry.code || null,
+        error: entry.error || null,
+        state: String(state),
+        ts: Number(entry.ts),
+      };
+    }
+  }
+
+  const userId = currentUserId(ctx);
+  const legacy = readLegacyMap(ctx, 'oauthPending')[String(state)];
+  if (
+    legacy &&
+    userId &&
+    String(legacy.userId) === userId &&
+    legacy.ts &&
+    Date.now() - Number(legacy.ts) <= OAUTH_TTL_MS
+  ) {
+    return {
+      code: legacy.code || null,
+      error: legacy.error || null,
+      state: String(state),
+      ts: Number(legacy.ts),
+    };
+  }
+  return null;
+}
+
+function clearPendingResult(ctx, state) {
+  const props = userExtensionProperties(ctx);
+  if (props) {
+    const entry = parseJsonObject(props.phonemosOAuthPending);
+    if (!state || (entry && String(entry.state) === String(state))) {
+      props.phonemosOAuthPending = null;
+    }
+  }
+  if (state) {
+    clearLegacyMapEntry(ctx, 'oauthPending', String(state));
+  }
+}
+
+/**
+ * Simple per-user rate limit for OAuth endpoints that can hit Keycloak.
+ * Must only be called from POST handlers (writes User extension properties).
+ */
+function consumeOAuthRateLimit(ctx) {
+  const props = userExtensionProperties(ctx);
+  if (!props) {
+    return {ok: false, message: 'Not authenticated.'};
+  }
+  const now = Date.now();
+  const prev = parseJsonObject(props.phonemosOAuthRate) || {};
+  let windowStart = prev.windowStart != null ? Number(prev.windowStart) : now;
+  let count = prev.count != null ? Number(prev.count) : 0;
+  if (now - windowStart > OAUTH_RATE_WINDOW_MS) {
+    windowStart = now;
+    count = 0;
+  }
+  count += 1;
+  props.phonemosOAuthRate = JSON.stringify({
+    windowStart: windowStart,
+    count: count,
+    ts: now,
+  });
+  if (count > OAUTH_RATE_MAX) {
+    return {
+      ok: false,
+      message: 'Too many Phonemos sign-in attempts. Try again in a few minutes.',
+    };
+  }
+  return {ok: true};
 }
 
 function parseJsonSafe(response) {
@@ -143,7 +343,6 @@ function exchangeRefreshToken(settings, refreshToken) {
   const origin = slash === -1 ? tokenUrl : tokenUrl.substring(0, slash);
   const path = slash === -1 ? '/' : tokenUrl.substring(slash);
 
-  // Same as backend exchangeToken: secret via basicAuth only (YouTrack secret setting).
   const fields = {
     grant_type: 'refresh_token',
     refresh_token: refreshToken,
@@ -226,7 +425,15 @@ function ensureAccessToken(ctx, settings) {
 }
 
 exports.currentUserId = currentUserId;
+exports.requireInteractiveUser = requireInteractiveUser;
 exports.readUserTokens = readUserTokens;
 exports.writeUserTokens = writeUserTokens;
 exports.clearUserTokens = clearUserTokens;
+exports.storeLogin = storeLogin;
+exports.readLogin = readLogin;
+exports.clearLogin = clearLogin;
+exports.storePendingResult = storePendingResult;
+exports.readPendingResult = readPendingResult;
+exports.clearPendingResult = clearPendingResult;
+exports.consumeOAuthRateLimit = consumeOAuthRateLimit;
 exports.ensureAccessToken = ensureAccessToken;

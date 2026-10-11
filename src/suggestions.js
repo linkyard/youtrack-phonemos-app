@@ -318,27 +318,37 @@ function mapSearchHits(settings, data) {
 }
 
 function runSearchStrategies(settings, accessToken, queries) {
+  // Cap Phonemos load: hybrid+wikipage per query, then at most two fallbacks on the
+  // first query (fulltext+wikipage, hybrid without type filter). Was up to ~12 calls.
   const strategies = [];
-  const modes = ['hybrid', 'fulltext'];
-  const typeOptions = [['wikipage'], null];
-
   for (let qi = 0; qi < queries.length; qi++) {
-    for (let mi = 0; mi < modes.length; mi++) {
-      for (let ti = 0; ti < typeOptions.length; ti++) {
-        strategies.push({
-          label: queries[qi].label,
-          q: queries[qi].q,
-          mode: modes[mi],
-          objectTypes: typeOptions[ti],
-        });
-      }
-    }
+    strategies.push({
+      label: queries[qi].label,
+      q: queries[qi].q,
+      mode: 'hybrid',
+      objectTypes: ['wikipage'],
+    });
+  }
+  if (queries.length) {
+    strategies.push({
+      label: queries[0].label,
+      q: queries[0].q,
+      mode: 'fulltext',
+      objectTypes: ['wikipage'],
+    });
+    strategies.push({
+      label: queries[0].label,
+      q: queries[0].q,
+      mode: 'hybrid',
+      objectTypes: null,
+    });
   }
 
+  const maxAttempts = 5;
   const attempts = [];
   let lastError = null;
 
-  for (let i = 0; i < strategies.length; i++) {
+  for (let i = 0; i < strategies.length && attempts.length < maxAttempts; i++) {
     const strategy = strategies[i];
     const serviceResponse = searchPhonemos(
       settings,
@@ -375,7 +385,6 @@ function runSearchStrategies(settings, accessToken, queries) {
       objectTypes: strategy.objectTypes ? strategy.objectTypes.join(',') : '(any)',
       status: serviceResponse.code,
       hits: items.length,
-      responseKeys: data && typeof data === 'object' ? Object.keys(data).slice(0, 8).join(',') : '',
     });
 
     if (items.length) {

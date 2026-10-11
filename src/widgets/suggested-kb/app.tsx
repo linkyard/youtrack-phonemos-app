@@ -34,7 +34,6 @@ type SearchAttempt = {
   status?: number;
   hits?: number;
   error?: string;
-  responseKeys?: string;
 };
 
 type SuggestionsResponse = {
@@ -65,9 +64,9 @@ const AppComponent: React.FunctionComponent = () => {
     setError(null);
     setDebug(null);
     try {
-      // Ensure a server-side session exists; the access token itself stays on the backend.
-      const tokens = await ensurePhonemosTokens(host);
-      if (!tokens) {
+      // Ensure a server-side session exists; tokens never enter the widget.
+      const session = await ensurePhonemosTokens(host);
+      if (!session) {
         setStatus('needs-auth');
         return;
       }
@@ -101,8 +100,7 @@ const AppComponent: React.FunctionComponent = () => {
         const attemptLines = (response.attempts || []).map((attempt) =>
           `${attempt.label || '?'}/${attempt.mode || '?'} types=${attempt.objectTypes || '?'} ` +
           `status=${attempt.status ?? '?'} hits=${attempt.hits ?? 0}` +
-          (attempt.error ? ` error=${attempt.error}` : '') +
-          (attempt.responseKeys ? ` keys=${attempt.responseKeys}` : ''),
+          (attempt.error ? ` error=${attempt.error}` : ''),
         );
         setDebug(
           [
