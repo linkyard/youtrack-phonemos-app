@@ -65,7 +65,7 @@ npm run pack
 
 Outbound URLs (`Phonemos base URL`, OAuth authorization/token URLs) must be `https` (or `http` on localhost). Authorization and token URLs must share the same host.
 
-The callback finishes on the YouTrack backend and notifies the opener via same-origin `postMessage` / `window.name`.
+The callback finishes on the YouTrack backend and notifies the opener via `postMessage` (target `*`, because widgets run in `about:srcdoc`) with `event.source` + OAuth `state` checks on receive.
 
 ### Search
 
@@ -93,7 +93,7 @@ If every strategy returns zero hits, the widget shows the query/`within` UUID an
 ## Auth flow
 
 1. Widget opens a Keycloak authorize popup (PKCE).
-2. Callback page finishes via authenticated `oauth/complete` and notifies the same-origin opener (`postMessage` with a concrete origin — not `*`, BroadcastChannel, or `localStorage`).
+2. Callback page finishes via authenticated `oauth/complete` and notifies the opener (`postMessage` with `*` so `about:srcdoc` widgets receive it; the opener accepts only its popup / YouTrack host origin and matching `state`).
 3. YouTrack HTTP handler exchanges the code using the client secret and stores tokens **server-side on the YouTrack User** (`phonemosOAuthSession`). Access and refresh tokens never leave the YouTrack backend; the widget only sees `{connected: true}`.
 4. Suggestions are loaded via an issue-scoped handler that uses the **server-stored** access token for the current YouTrack user (the widget never sends a Bearer token). Phonemos still enforces that user’s permissions.
 

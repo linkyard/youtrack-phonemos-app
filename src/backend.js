@@ -344,10 +344,6 @@ exports.httpHandler = {
         if (authError) {
           return ctx.response.json({success: false, message: authError});
         }
-        const rateError = rejectIfRateLimited(ctx);
-        if (rateError) {
-          return ctx.response.json({success: false, message: rateError});
-        }
         const body = ctx.request.json() || {};
         const state = body.state;
         const code = body.code || null;
@@ -359,7 +355,8 @@ exports.httpHandler = {
           return ctx.response.json({success: false, message: 'code or error is required.'});
         }
 
-        // Stash on the current user so a surviving parent widget can finish if needed.
+        // Stash before rate-limit / token work so the parent can still finish via
+        // oauth/pending + oauth/token if this request cannot finalize.
         storePendingResult(ctx, state, code, error);
 
         if (error) {
@@ -376,6 +373,16 @@ exports.httpHandler = {
             connected: false,
             finalized: false,
             message: 'Login verifier missing; parent widget must finish token exchange.',
+          });
+        }
+
+        const rateError = rejectIfRateLimited(ctx);
+        if (rateError) {
+          return ctx.response.json({
+            success: false,
+            connected: false,
+            finalized: false,
+            message: rateError,
           });
         }
 
@@ -403,7 +410,7 @@ exports.httpHandler = {
         );
         const tokens = tokensFromMappedResponse(mapped);
         if (!tokens) {
-          clearLogin(ctx, state);
+          // Keep pending + login so the parent can retry token exchange.
           return ctx.response.json({
             success: false,
             connected: false,
@@ -411,7 +418,14 @@ exports.httpHandler = {
             message: mapped.message || 'Token exchange failed.',
           });
         }
-        writeUserTokens(ctx, tokens);
+        if (!writeUserTokens(ctx, tokens)) {
+          return ctx.response.json({
+            success: false,
+            connected: false,
+            finalized: false,
+            message: 'Unable to store Phonemos session for this YouTrack user.',
+          });
+        }
         clearLogin(ctx, state);
         clearPendingResult(ctx, state);
         return ctx.response.json({success: true, connected: true, finalized: true});

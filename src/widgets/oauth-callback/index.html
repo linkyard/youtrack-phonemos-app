@@ -27,7 +27,8 @@
           try { window.name = 'phonemos-oauth:' + serialized; } catch (e) {}
           try {
             if (window.opener) {
-              window.opener.postMessage(payload, window.location.origin);
+              // Opener is about:srcdoc — must use '*' or the message is dropped.
+              window.opener.postMessage(payload, '*');
             }
           } catch (e) {}
         } catch (e) {}

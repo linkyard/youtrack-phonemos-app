@@ -128,7 +128,8 @@ const AppComponent: React.FunctionComponent = () => {
           // ignore
         }
         try {
-          (window.opener || window.top?.opener)?.postMessage(payload, window.location.origin);
+          // Opener is about:srcdoc — must use '*' or the message is dropped.
+          (window.opener || window.top?.opener)?.postMessage(payload, '*');
         } catch {
           // ignore
         }
@@ -285,13 +286,35 @@ const AppComponent: React.FunctionComponent = () => {
     await runSearch();
   };
 
+  const accountBar = (
+    <div className="account">
+      <div className="status">
+        <span className={connected ? 'status-dot on' : 'status-dot'} aria-hidden />
+        <p className="status-label">{connected ? 'Connected' : 'Not connected'}</p>
+        {busy ? <LoaderInline /> : null}
+      </div>
+      {connected ? (
+        <Button text onClick={() => void onDisconnect()} disabled={busy || !host}>
+          Disconnect
+        </Button>
+      ) : (
+        <Button primary onClick={() => void onConnect()} disabled={busy || !host}>
+          Connect
+        </Button>
+      )}
+    </div>
+  );
+
   const brandHero = (
     <header className="hero">
-      <img className="logo" src={phonemosLogo} alt="Phonemos" width={333} height={72} />
-      <p className="lead">
-        Search your knowledge base from YouTrack. On tickets, Phonemos also suggests articles from
-        the issue text.
-      </p>
+      <div className="hero-main">
+        <img className="logo" src={phonemosLogo} alt="Phonemos" width={333} height={72} />
+        <p className="lead">
+          Search your knowledge base from YouTrack. On tickets, Phonemos also suggests articles from
+          the issue text.
+        </p>
+      </div>
+      {accountBar}
     </header>
   );
 
@@ -299,7 +322,11 @@ const AppComponent: React.FunctionComponent = () => {
     return (
       <div className="page">
         <div className="shell">
-          {brandHero}
+          <header className="hero">
+            <div className="hero-main">
+              <img className="logo" src={phonemosLogo} alt="Phonemos" width={333} height={72} />
+            </div>
+          </header>
           <div className="panel">
             <div className="row">
               <LoaderInline />
@@ -315,7 +342,11 @@ const AppComponent: React.FunctionComponent = () => {
     return (
       <div className="page">
         <div className="shell">
-          {brandHero}
+          <header className="hero">
+            <div className="hero-main">
+              <img className="logo" src={phonemosLogo} alt="Phonemos" width={333} height={72} />
+            </div>
+          </header>
           <div className="panel">
             <p className="empty-state">{message}</p>
           </div>
@@ -329,36 +360,13 @@ const AppComponent: React.FunctionComponent = () => {
       <div className="shell">
         {brandHero}
 
-        <section className="panel">
-          <div className="panel-header">
-            <h2 className="panel-title">Account</h2>
-            <div className="status">
-              <span className={connected ? 'status-dot on' : 'status-dot'} aria-hidden />
-              <p className="status-label">
-                {connected ? 'Connected' : 'Not connected'}
-              </p>
-              {busy ? <LoaderInline /> : null}
-            </div>
-          </div>
-          <div className="actions">
-            {connected ? (
-              <Button onClick={() => void onDisconnect()} disabled={busy || !host}>
-                Disconnect
-              </Button>
-            ) : (
-              <Button primary onClick={() => void onConnect()} disabled={busy || !host}>
-                Connect to Phonemos
-              </Button>
-            )}
-          </div>
-          {mode === 'error' && message ? <p className="error">{message}</p> : null}
-          {!connected && (
-            <p className="hint">
-              Sign-in from a ticket also works. Keycloak must allow the appResources popup callback
-              URL shown under Connect on the ticket widget — not this menu page URL.
-            </p>
-          )}
-        </section>
+        {mode === 'error' && message ? <p className="error banner-error">{message}</p> : null}
+        {!connected && (
+          <p className="hint banner-hint">
+            Sign-in from a ticket also works. Keycloak must allow the appResources popup callback URL
+            shown under Connect on the ticket widget — not this menu page URL.
+          </p>
+        )}
 
         {connected && (
           <section className="panel">

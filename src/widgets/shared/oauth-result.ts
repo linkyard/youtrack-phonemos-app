@@ -48,14 +48,24 @@ export function parseOAuthResult(raw: string | null | undefined): OAuthResultPay
   }
 }
 
-/** Same-origin target for opener postMessage (never '*'). */
-export function oauthMessageTargetOrigin(): string {
-  return window.location.origin;
+/** Origin of the YouTrack host (from baseURI), not the widget's about:srcdoc origin. */
+export function youTrackHostOrigin(): string | null {
+  for (const candidate of [document.baseURI, window.location.href]) {
+    try {
+      if (!candidate || candidate.startsWith('about:')) {
+        continue;
+      }
+      return new URL(candidate).origin;
+    } catch {
+      // ignore
+    }
+  }
+  return null;
 }
 
 /**
- * Publish the OAuth code to the opener (same-origin) and finish on the YouTrack backend.
- * Avoids BroadcastChannel / localStorage broadcasts that widen code exposure.
+ * Publish the OAuth code to the opener and finish on the YouTrack backend.
+ * Opener is usually about:srcdoc — postMessage must use '*' or it never delivers.
  */
 export async function publishOAuthResult(
   host: HostWithStorage,
@@ -74,9 +84,8 @@ export async function publishOAuthResult(
   }
 
   const opener = window.opener || window.top?.opener || null;
-  const targetOrigin = oauthMessageTargetOrigin();
   try {
-    opener?.postMessage(full, targetOrigin);
+    opener?.postMessage(full, '*');
   } catch {
     // ignore
   }
@@ -89,7 +98,7 @@ export async function publishOAuthResult(
     }
   }
 
-  // Most reliable channel: authenticated YouTrack handler, polled by the ticket widget.
+  // Authenticated YouTrack handler, polled by the ticket/menu widget.
   if (host.fetchApp && full.state) {
     try {
       await host.fetchApp('backend/oauth/complete', {
@@ -123,7 +132,6 @@ function paramsFromQueryOrHash(search: string, hash: string): URLSearchParams {
   }
   if (hash) {
     const raw = hash.startsWith('#') ? hash.slice(1) : hash;
-    // Keycloak fragment mode: #code=...&state=... (not a path hash)
     if (raw.includes('=')) {
       return new URLSearchParams(raw);
     }
@@ -177,7 +185,7 @@ export function waitForOAuthResult(
 ): Promise<string> {
   return new Promise((resolve, reject) => {
     let settled = false;
-    const expectedOrigin = oauthMessageTargetOrigin();
+    const hostOrigin = youTrackHostOrigin();
 
     const settle = (fn: () => void) => {
       if (settled) {
@@ -208,13 +216,17 @@ export function waitForOAuthResult(
     };
 
     const onMessage = (event: MessageEvent) => {
-      // Require same origin; state matching below rejects foreign flows.
-      if (event.origin !== expectedOrigin) {
+      if (!isOAuthResult(event.data)) {
         return;
       }
-      if (isOAuthResult(event.data)) {
-        accept(event.data);
+      // Trust our popup window, or any message from the YouTrack host origin
+      // (callback page). Do not require event.origin === about:srcdoc origin.
+      const fromPopup = Boolean(popup && event.source === popup);
+      const fromHost = Boolean(hostOrigin && event.origin === hostOrigin);
+      if (!fromPopup && !fromHost) {
+        return;
       }
+      accept(event.data);
     };
 
     const readPopupName = (): OAuthResultPayload | null => {
@@ -229,7 +241,6 @@ export function waitForOAuthResult(
         }
         return parseOAuthResult(raw.slice(prefix.length));
       } catch {
-        // Cross-origin until the callback navigates to about:blank
         return null;
       }
     };
@@ -289,12 +300,11 @@ export function waitForOAuthResult(
         return;
       }
       if (closedGrace == null) {
-        // Give server finalize / storage a moment after the popup closes.
         closedGrace = window.setTimeout(() => {
           settle(() => reject(new Error('Phonemos sign-in was cancelled.')));
-        }, 1500);
+        }, 4000);
       }
-    }, 300);
+    }, 200);
 
     const timeout = window.setTimeout(() => {
       settle(() => reject(new Error('Phonemos sign-in timed out.')));
@@ -308,8 +318,6 @@ export function waitForOAuthResult(
         window.clearTimeout(closedGrace);
       }
       window.removeEventListener('message', onMessage);
-      // Do not close the popup here — a parallel session waiter may still need it,
-      // and rejecting on stale results must never kill an in-progress login.
     };
 
     window.addEventListener('message', onMessage);

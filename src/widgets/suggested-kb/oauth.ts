@@ -276,7 +276,7 @@ async function waitForSession(
       if (!sawClosed) {
         sawClosed = true;
         closedAt = Date.now();
-      } else if (Date.now() - closedAt > 2500) {
+      } else if (Date.now() - closedAt > 5000) {
         const last = await fetchSession(host).catch((e) => {
           lastSessionError = errorText(e);
           return null;
@@ -364,7 +364,11 @@ export async function connectPhonemos(host: HostAPI): Promise<PhonemosSession> {
     }
     pushDebug(`authorizeUrl=${shortUrl(authorize.url)}`);
 
-    const popup = window.open(authorize.url, 'phonemos-oauth', 'width=480,height=720');
+    // Unique name each attempt. Reusing a fixed name after the callback navigates
+    // the previous popup to about:blank can leave Chromium with an empty window
+    // that never loads the authorize URL (disconnect → connect hang).
+    const popupName = `phonemos-oauth-${state.slice(0, 12)}`;
+    const popup = window.open(authorize.url, popupName, 'width=480,height=720');
     if (!popup) {
       throw new Error(['Pop-up blocked. Allow pop-ups for YouTrack to connect Phonemos.', ...debug].join('\n'));
     }

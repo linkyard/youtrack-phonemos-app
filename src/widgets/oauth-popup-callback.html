@@ -49,15 +49,17 @@
           ts: Date.now(),
         };
 
-        function publishLocal() {
-          var serialized = JSON.stringify(payload);
+        function notifyOpener() {
           try {
-            window.name = 'phonemos-oauth:' + serialized;
+            window.name = 'phonemos-oauth:' + JSON.stringify(payload);
           } catch (e) {}
-          // Same-origin opener only — never postMessage('*'), BroadcastChannel, or localStorage.
+          // YouTrack widgets run in about:srcdoc (opaque origin). A concrete
+          // targetOrigin never matches, so the opener must be addressed with '*'.
+          // The opener still requires event.source === this popup and matching state.
           try {
-            if (window.opener) {
-              window.opener.postMessage(payload, window.location.origin);
+            var opener = window.opener || (window.top && window.top.opener) || null;
+            if (opener) {
+              opener.postMessage(payload, '*');
             }
           } catch (e) {}
         }
@@ -65,17 +67,17 @@
         function closeSoon() {
           setTimeout(function () {
             try {
-              window.location.replace('about:blank');
-            } catch (e) {
-              try {
-                window.close();
-              } catch (e2) {}
-            }
-          }, 400);
+              window.close();
+            } catch (e) {}
+          }, 800);
         }
 
-        // Finish token exchange on the YouTrack backend using the browser session.
-        // This survives the ticket widget remounting after the popup closes.
+        // Tell the widget immediately — do not navigate to about:blank (empty hang,
+        // and srcdoc still cannot read window.name across origins).
+        notifyOpener();
+        setTimeout(notifyOpener, 200);
+        setTimeout(notifyOpener, 500);
+
         var completeUrl =
           window.location.origin +
           '/api/extensionEndpoints/' +
@@ -89,6 +91,7 @@
           headers: {
             Accept: 'application/json',
             'Content-Type': 'application/json',
+            'X-Requested-With': 'XMLHttpRequest',
           },
           body: JSON.stringify({
             code: code,
@@ -107,31 +110,24 @@
               });
           })
           .then(function (result) {
-            publishLocal();
+            notifyOpener();
             if (error) {
               msg.textContent = 'Sign-in failed: ' + error;
-              closeSoon();
-              return;
-            }
-            if (result.data && result.data.connected) {
+            } else if (result.data && result.data.connected) {
               msg.textContent = 'Signed in. You can close this window.';
-            } else if (result.data && result.data.success) {
-              msg.textContent =
-                'Signed in (waiting for ticket widget). You can close this window.';
             } else {
               msg.textContent =
-                'Sign-in may be incomplete: ' +
-                ((result.data && result.data.message) || 'unknown error') +
-                '. You can close this window.';
+                'Returning to YouTrack… ' +
+                ((result.data && result.data.message) || '');
             }
             closeSoon();
           })
           .catch(function (e) {
-            publishLocal();
+            notifyOpener();
             msg.textContent =
-              'Could not reach YouTrack to finish sign-in (' +
+              'Returning to YouTrack… (' +
               (e && e.message ? e.message : 'network error') +
-              '). You can close this window.';
+              ')';
             closeSoon();
           });
       })();
