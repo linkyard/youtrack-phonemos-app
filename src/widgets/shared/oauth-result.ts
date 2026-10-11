@@ -267,6 +267,7 @@ export function waitForOAuthResult(
 
         if (host.fetchApp) {
           try {
+            // POST one-time consumes the pending code on the server.
             const pending = await host.fetchApp<{
               success?: boolean;
               pending?: boolean;
@@ -275,8 +276,8 @@ export function waitForOAuthResult(
               state?: string | null;
               error?: string | null;
             }>('backend/oauth/pending', {
-              method: 'GET',
-              query: {state: expectedState},
+              method: 'POST',
+              body: {state: expectedState},
             });
             if (pending?.success && pending.pending) {
               accept({

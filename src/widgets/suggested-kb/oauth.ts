@@ -401,12 +401,12 @@ export async function connectPhonemos(host: HostAPI): Promise<PhonemosSession> {
         }
         return session;
       }
+      // Server uses the stored PKCE login for this state — do not send verifier/redirect.
       const tokenResponse = await fetchAppOrThrow<TokenResponse>(host, 'backend/oauth/token', {
         method: 'POST',
         body: {
+          state,
           code,
-          code_verifier: codeVerifier,
-          redirect_uri: redirectUri,
         },
       });
       const session = sessionFromResponse(tokenResponse);

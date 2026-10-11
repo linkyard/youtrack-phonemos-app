@@ -94,8 +94,9 @@ If every strategy returns zero hits, the widget shows the query/`within` UUID an
 
 1. Widget opens a Keycloak authorize popup (PKCE).
 2. Callback page finishes via authenticated `oauth/complete` and notifies the opener (`postMessage` with `*` so `about:srcdoc` widgets receive it; the opener accepts only its popup / YouTrack host origin and matching `state`).
-3. YouTrack HTTP handler exchanges the code using the client secret and stores tokens **server-side on the YouTrack User** (`phonemosOAuthSession`). Access and refresh tokens never leave the YouTrack backend; the widget only sees `{connected: true}`.
-4. Suggestions are loaded via an issue-scoped handler that uses the **server-stored** access token for the current YouTrack user (the widget never sends a Bearer token). Phonemos still enforces that user’s permissions.
+3. YouTrack HTTP handler exchanges the code using the client secret and the **server-stored** PKCE verifier/`redirect_uri` (must be the `appResources` popup callback). Tokens are stored on the YouTrack User (`phonemosOAuthSession`). Access and refresh tokens never leave the YouTrack backend; the widget only sees `{connected: true}`.
+4. Pending authorization codes are handed out once via `POST oauth/pending` (consumed). Disconnect revokes the Keycloak refresh token when possible.
+5. Suggestions are loaded via an issue-scoped handler that uses the **server-stored** access token for the current YouTrack user (the widget never sends a Bearer token). Phonemos still enforces that user’s permissions.
 
 OAuth endpoints reject guest users and rate-limit sign-in attempts per YouTrack user. Search tries a short hybrid/fulltext fallback chain (max 5 Phonemos calls) instead of a full strategy matrix.
 

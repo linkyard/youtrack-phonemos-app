@@ -310,6 +310,14 @@ exports.httpHandler = {
             message: 'redirect_uri is required.',
           });
         }
+        if (!urlSafety.isAllowedOAuthRedirectUri(redirectUri)) {
+          return ctx.response.json({
+            success: false,
+            message:
+              'redirect_uri must be the appResources popup callback ' +
+              '(…/api/appResources/{id}/widgets/oauth-popup-callback.html).',
+          });
+        }
         if (!storeLogin(ctx, state, codeVerifier, redirectUri)) {
           return ctx.response.json({
             success: false,
@@ -433,20 +441,21 @@ exports.httpHandler = {
     },
     {
       scope: 'global',
-      method: 'GET',
+      // POST so we can one-time consume (clear) after handing out the code.
+      method: 'POST',
       path: 'oauth/pending',
       handle: function handle(ctx) {
         const authError = rejectIfUnauthorized(ctx);
         if (authError) {
           return ctx.response.json({success: false, message: authError});
         }
-        const state = ctx.request.getParameter('state');
+        const body = ctx.request.json() || {};
+        const state = body.state || ctx.request.getParameter('state');
         if (!state) {
           return ctx.response.json({success: false, message: 'state is required.'});
         }
 
-        // Read-only: GET handlers must not write storage.
-        const entry = phonemosSession.readPendingResult(ctx, state);
+        const entry = phonemosSession.consumePendingResult(ctx, state);
         if (!entry) {
           return ctx.response.json({success: true, pending: false});
         }
@@ -488,31 +497,57 @@ exports.httpHandler = {
         }
 
         const body = ctx.request.json() || {};
-        if (!body.code || !body.code_verifier) {
+        const state = body.state;
+        const code = body.code ? String(body.code) : '';
+        if (!state || !code) {
           return ctx.response.json({
             success: false,
-            message: 'code and code_verifier are required.',
+            message: 'state and code are required.',
           });
         }
-        const redirectUri = body.redirect_uri || settings.oauthRedirectUri;
-        if (!redirectUri) {
+
+        // Bind exchange to the server-stored PKCE login — never trust client verifier/redirect.
+        const login = readLogin(ctx, state);
+        if (!login || !login.codeVerifier || !login.redirectUri) {
           return ctx.response.json({
             success: false,
-            message: 'redirect_uri is required.',
+            message: 'No in-flight Phonemos login for this state. Start Connect again.',
           });
         }
-        const code = String(body.code);
-        const codeVerifier = String(body.code_verifier);
+        if (!urlSafety.isAllowedOAuthRedirectUri(login.redirectUri)) {
+          clearLogin(ctx, state);
+          clearPendingResult(ctx, state);
+          return ctx.response.json({
+            success: false,
+            message: 'Stored redirect_uri is not an allowed appResources callback.',
+          });
+        }
+
+        const pending = phonemosSession.readPendingResult(ctx, state);
+        if (pending && pending.code && String(pending.code) !== code) {
+          return ctx.response.json({
+            success: false,
+            message: 'Authorization code does not match the pending Phonemos login.',
+          });
+        }
+
         const serviceResponse = exchangeToken(settings, {
           grant_type: 'authorization_code',
           code: code,
-          redirect_uri: redirectUri,
-          code_verifier: codeVerifier,
+          redirect_uri: String(login.redirectUri),
+          code_verifier: String(login.codeVerifier),
         });
         const mapped = mapTokenResponse(serviceResponse);
         const tokens = tokensFromMappedResponse(mapped);
         if (tokens) {
-          writeUserTokens(ctx, tokens);
+          if (!writeUserTokens(ctx, tokens)) {
+            return ctx.response.json({
+              success: false,
+              message: 'Unable to store Phonemos session for this YouTrack user.',
+            });
+          }
+          clearLogin(ctx, state);
+          clearPendingResult(ctx, state);
         }
         // Do not return refresh tokens to the widget.
         return ctx.response.json(publicTokenResponse(mapped));
@@ -594,6 +629,20 @@ exports.httpHandler = {
         const authError = rejectIfUnauthorized(ctx);
         if (authError) {
           return ctx.response.json({success: false, message: authError});
+        }
+        const stored = readUserTokens(ctx);
+        const refreshToken = stored && stored.refreshToken ? stored.refreshToken : null;
+        if (refreshToken) {
+          const settings = requireSettings(ctx);
+          const missing = missingSettings(settings, [
+            'oauthClientId',
+            'oauthClientSecret',
+            'oauthTokenUrl',
+          ]);
+          if (!missing.length) {
+            // Best-effort IdP revoke; always clear local session afterward.
+            phonemosSession.revokeRefreshToken(settings, refreshToken);
+          }
         }
         clearUserTokens(ctx);
         clearLogin(ctx, null);

@@ -1,7 +1,7 @@
 /**
  * Per-user Phonemos OAuth state (User extension properties).
  * Tokens, in-flight login, pending code, and rate limits stay off shared AppGlobalStorage.
- * Legacy global maps are still read once for migration.
+ * Legacy global maps are cleared on write but no longer used for auth decisions.
  */
 const http = require('@jetbrains/youtrack-scripting-api/http');
 const urlSafety = require('./url-safety');
@@ -103,14 +103,6 @@ function clearLegacyMapEntry(ctx, propertyName, key) {
   writeLegacyMap(ctx, propertyName, map);
 }
 
-function readLegacyUserTokens(ctx) {
-  const userId = currentUserId(ctx);
-  if (!userId) {
-    return null;
-  }
-  return parseTokenEntry(readLegacyMap(ctx, 'oauthSessions')[userId]);
-}
-
 function clearLegacyUserTokens(ctx) {
   const userId = currentUserId(ctx);
   if (userId) {
@@ -120,13 +112,10 @@ function clearLegacyUserTokens(ctx) {
 
 function readUserTokens(ctx) {
   const props = userExtensionProperties(ctx);
-  if (props) {
-    const fromUser = parseTokenEntry(props.phonemosOAuthSession);
-    if (fromUser) {
-      return fromUser;
-    }
+  if (!props) {
+    return null;
   }
-  return readLegacyUserTokens(ctx);
+  return parseTokenEntry(props.phonemosOAuthSession);
 }
 
 function writeUserTokens(ctx, tokens) {
@@ -173,39 +162,22 @@ function readLogin(ctx, state) {
     return null;
   }
   const props = userExtensionProperties(ctx);
-  if (props) {
-    const entry = parseJsonObject(props.phonemosOAuthLogin);
-    if (
-      entry &&
-      String(entry.state) === String(state) &&
-      entry.codeVerifier &&
-      entry.redirectUri &&
-      entry.ts &&
-      Date.now() - Number(entry.ts) <= OAUTH_TTL_MS
-    ) {
-      return {
-        codeVerifier: String(entry.codeVerifier),
-        redirectUri: String(entry.redirectUri),
-        ts: Number(entry.ts),
-      };
-    }
+  if (!props) {
+    return null;
   }
-
-  const userId = currentUserId(ctx);
-  const legacy = readLegacyMap(ctx, 'oauthLogins')[String(state)];
+  const entry = parseJsonObject(props.phonemosOAuthLogin);
   if (
-    legacy &&
-    userId &&
-    String(legacy.userId) === userId &&
-    legacy.codeVerifier &&
-    legacy.redirectUri &&
-    legacy.ts &&
-    Date.now() - Number(legacy.ts) <= OAUTH_TTL_MS
+    entry &&
+    String(entry.state) === String(state) &&
+    entry.codeVerifier &&
+    entry.redirectUri &&
+    entry.ts &&
+    Date.now() - Number(entry.ts) <= OAUTH_TTL_MS
   ) {
     return {
-      codeVerifier: String(legacy.codeVerifier),
-      redirectUri: String(legacy.redirectUri),
-      ts: Number(legacy.ts),
+      codeVerifier: String(entry.codeVerifier),
+      redirectUri: String(entry.redirectUri),
+      ts: Number(entry.ts),
     };
   }
   return null;
@@ -244,40 +216,37 @@ function readPendingResult(ctx, state) {
     return null;
   }
   const props = userExtensionProperties(ctx);
-  if (props) {
-    const entry = parseJsonObject(props.phonemosOAuthPending);
-    if (
-      entry &&
-      String(entry.state) === String(state) &&
-      entry.ts &&
-      Date.now() - Number(entry.ts) <= OAUTH_TTL_MS
-    ) {
-      return {
-        code: entry.code || null,
-        error: entry.error || null,
-        state: String(state),
-        ts: Number(entry.ts),
-      };
-    }
+  if (!props) {
+    return null;
   }
-
-  const userId = currentUserId(ctx);
-  const legacy = readLegacyMap(ctx, 'oauthPending')[String(state)];
+  const entry = parseJsonObject(props.phonemosOAuthPending);
   if (
-    legacy &&
-    userId &&
-    String(legacy.userId) === userId &&
-    legacy.ts &&
-    Date.now() - Number(legacy.ts) <= OAUTH_TTL_MS
+    entry &&
+    String(entry.state) === String(state) &&
+    entry.ts &&
+    Date.now() - Number(entry.ts) <= OAUTH_TTL_MS
   ) {
     return {
-      code: legacy.code || null,
-      error: legacy.error || null,
+      code: entry.code || null,
+      error: entry.error || null,
       state: String(state),
-      ts: Number(legacy.ts),
+      ts: Number(entry.ts),
     };
   }
   return null;
+}
+
+/**
+ * Read and clear pending OAuth result for this user+state (one-time consume).
+ * Must only be called from POST handlers.
+ */
+function consumePendingResult(ctx, state) {
+  const entry = readPendingResult(ctx, state);
+  if (!entry) {
+    return null;
+  }
+  clearPendingResult(ctx, state);
+  return entry;
 }
 
 function clearPendingResult(ctx, state) {
@@ -362,6 +331,39 @@ function exchangeRefreshToken(settings, refreshToken) {
   return connection.postSync(path, null, bodyParts.join('&'));
 }
 
+function revokeRefreshToken(settings, refreshToken) {
+  const revokeUrl = urlSafety.revokeUrlFromTokenUrl(settings.oauthTokenUrl);
+  if (!revokeUrl || !refreshToken) {
+    return {ok: false, message: 'Revocation endpoint unavailable.'};
+  }
+  const unsafe = urlSafety.validateHttpsUrl(revokeUrl, 'OAuth revocation URL');
+  if (!unsafe.ok) {
+    return {ok: false, message: unsafe.message};
+  }
+  // Auth/token hosts must match; revoke is derived from token URL so same host.
+  const slash = revokeUrl.indexOf('/', revokeUrl.indexOf('://') + 3);
+  const origin = slash === -1 ? revokeUrl : revokeUrl.substring(0, slash);
+  const path = slash === -1 ? '/' : revokeUrl.substring(slash);
+
+  const body =
+    'token=' +
+    encodeURIComponent(String(refreshToken)) +
+    '&token_type_hint=refresh_token' +
+    '&client_id=' +
+    encodeURIComponent(String(settings.oauthClientId));
+
+  try {
+    const connection = new http.Connection(origin);
+    connection.basicAuth(settings.oauthClientId, settings.oauthClientSecret);
+    connection.addHeader('Content-Type', 'application/x-www-form-urlencoded');
+    connection.addHeader('Accept', 'application/json');
+    const response = connection.postSync(path, null, body);
+    return {ok: !!(response && (response.isSuccess || response.code === 200 || response.code === 204))};
+  } catch (e) {
+    return {ok: false, message: 'Revocation request failed.'};
+  }
+}
+
 /**
  * Return a usable access token for the current YouTrack user from server storage.
  * Refreshes via Keycloak when expired. Never trusts client-supplied tokens.
@@ -434,6 +436,8 @@ exports.readLogin = readLogin;
 exports.clearLogin = clearLogin;
 exports.storePendingResult = storePendingResult;
 exports.readPendingResult = readPendingResult;
+exports.consumePendingResult = consumePendingResult;
 exports.clearPendingResult = clearPendingResult;
 exports.consumeOAuthRateLimit = consumeOAuthRateLimit;
 exports.ensureAccessToken = ensureAccessToken;
+exports.revokeRefreshToken = revokeRefreshToken;
