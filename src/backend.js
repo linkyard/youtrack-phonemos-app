@@ -211,6 +211,22 @@ function tokensFromMappedResponse(mapped) {
   };
 }
 
+/** Strip refresh tokens before sending token responses to the browser. */
+function publicTokenResponse(mapped) {
+  if (!mapped || typeof mapped !== 'object') {
+    return mapped;
+  }
+  return {
+    success: mapped.success,
+    message: mapped.message,
+    accessToken: mapped.accessToken,
+    expiresIn: mapped.expiresIn,
+    expiresAt: mapped.expiresAt,
+    tokenType: mapped.tokenType,
+    canRefresh: mapped.success ? true : undefined,
+  };
+}
+
 function trimSetting(value) {
   return value == null ? value : String(value).trim();
 }
@@ -664,7 +680,8 @@ exports.httpHandler = {
         if (tokens) {
           writeUserTokens(ctx, tokens);
         }
-        return ctx.response.json(mapped);
+        // Do not return refresh tokens to the widget.
+        return ctx.response.json(publicTokenResponse(mapped));
       },
     },
     {
@@ -685,13 +702,14 @@ exports.httpHandler = {
           });
         }
 
-        const body = ctx.request.json() || {};
+        // Prefer the server-stored refresh token. Ignore any client-supplied value so
+        // the browser never needs (or can forge) a refresh token.
         const stored = readUserTokens(ctx);
-        const refreshToken = body.refreshToken || (stored && stored.refreshToken);
+        const refreshToken = stored && stored.refreshToken ? stored.refreshToken : null;
         if (!refreshToken) {
           return ctx.response.json({
             success: false,
-            message: 'refreshToken is required.',
+            message: 'No stored refresh token for this user. Connect to Phonemos again.',
           });
         }
 
@@ -712,13 +730,12 @@ exports.httpHandler = {
           // Keycloak may omit refresh_token on refresh; keep the previous one.
           if (!tokens.refreshToken) {
             tokens.refreshToken = refreshToken;
-            mapped.refreshToken = refreshToken;
           }
           writeUserTokens(ctx, tokens);
         } else {
           clearUserTokens(ctx);
         }
-        return ctx.response.json(mapped);
+        return ctx.response.json(publicTokenResponse(mapped));
       },
     },
     {
@@ -730,12 +747,14 @@ exports.httpHandler = {
         if (!tokens) {
           return ctx.response.json({success: true, connected: false});
         }
+        // Never return refresh tokens to the browser — they stay server-side only.
         return ctx.response.json({
           success: true,
           connected: true,
           accessToken: tokens.accessToken,
-          refreshToken: tokens.refreshToken,
           expiresAt: tokens.expiresAt,
+          // Hint that a server-side refresh is available without exposing the token.
+          canRefresh: !!tokens.refreshToken,
         });
       },
     },

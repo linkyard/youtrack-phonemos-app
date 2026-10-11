@@ -7,8 +7,8 @@ export {deriveOAuthCallbackUrl, getRedirectDebugInfo, resolveOAuthRedirectUri};
 
 export type PhonemosTokens = {
   accessToken: string;
-  refreshToken: string | null;
   expiresAt: number | null;
+  canRefresh?: boolean;
 };
 
 type OAuthConfig = {
@@ -24,17 +24,17 @@ type TokenResponse = {
   success: boolean;
   message?: string;
   accessToken?: string;
-  refreshToken?: string | null;
   expiresIn?: number | null;
   expiresAt?: number | null;
+  canRefresh?: boolean;
 };
 
 type SessionResponse = {
   success: boolean;
   connected?: boolean;
   accessToken?: string;
-  refreshToken?: string | null;
   expiresAt?: number | null;
+  canRefresh?: boolean;
   message?: string;
 };
 
@@ -73,8 +73,8 @@ function tokensFromResponse(response: TokenResponse | SessionResponse): Phonemos
         : null;
   return {
     accessToken: response.accessToken,
-    refreshToken: response.refreshToken ?? null,
     expiresAt,
+    canRefresh: Boolean(response.canRefresh),
   };
 }
 
@@ -104,23 +104,32 @@ export function clearMemoryTokens(): void {
   memoryTokens = null;
 }
 
+async function refreshServerSession(host: HostAPI): Promise<PhonemosTokens | null> {
+  // Refresh token never leaves the YouTrack backend — empty body is enough.
+  const refreshed = await fetchAppOrThrow<TokenResponse>(host, 'backend/oauth/refresh', {
+    method: 'POST',
+    body: {},
+  });
+  const next = tokensFromResponse(refreshed);
+  if (next) {
+    memoryTokens = next;
+    return next;
+  }
+  return null;
+}
+
 async function fetchSession(host: HostAPI): Promise<PhonemosTokens | null> {
   const session = await fetchAppOrThrow<SessionResponse>(host, 'backend/oauth/session', {method: 'GET'});
+  if (!session.success || !session.connected) {
+    return null;
+  }
   const fromSession = tokensFromResponse(session);
   if (fromSession && !isExpired(fromSession)) {
     memoryTokens = fromSession;
     return fromSession;
   }
-  if (fromSession?.refreshToken) {
-    const refreshed = await fetchAppOrThrow<TokenResponse>(host, 'backend/oauth/refresh', {
-      method: 'POST',
-      body: {refreshToken: fromSession.refreshToken},
-    });
-    const next = tokensFromResponse(refreshed);
-    if (next) {
-      memoryTokens = next;
-      return next;
-    }
+  if (session.canRefresh || fromSession?.canRefresh) {
+    return refreshServerSession(host);
   }
   return null;
 }
@@ -437,7 +446,7 @@ export async function connectPhonemos(host: HostAPI): Promise<PhonemosTokens> {
         const session = await fetchAppOrThrow<SessionResponse>(host, 'backend/oauth/session', {method: 'GET'});
         sessionSnapshot =
           `sessionSuccess=${String(session.success)} connected=${String(!!session.connected)} ` +
-          `hasAccessToken=${String(!!session.accessToken)} hasRefreshToken=${String(!!session.refreshToken)}`;
+          `hasAccessToken=${String(!!session.accessToken)} canRefresh=${String(!!session.canRefresh)}`;
       } catch (sessionError) {
         sessionSnapshot = `sessionSnapshotError=${formatUnknownError(sessionError)}`;
       }
