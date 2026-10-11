@@ -24,11 +24,11 @@
     },
     {
       "key": "oauth-callback",
-      "name": "Phonemos",
+      "name": "Phonemos search",
       "indexPath": "oauth-callback/index.html",
       "extensionPoint": "MAIN_MENU_ITEM",
       "iconPath": "oauth-callback/widget-icon.png",
-      "description": "Phonemos connection status and Helpdesk KB entry point",
+      "description": "Search the Phonemos knowledge base and manage the connection",
       "showHeader": false
     }
   ]

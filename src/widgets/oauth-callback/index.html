@@ -3,37 +3,10 @@
   <head>
     <meta charset="UTF-8"/>
     <link rel="stylesheet" href="app.css">
-    <title>Phonemos</title>
+    <title>Phonemos search</title>
   </head>
   <body style="margin:0;min-height:100%;background:#f3f6fc;">
     <div id="root"></div>
-    <!-- Runs before the React app; useful when this HTML is opened top-level as redirect_uri. -->
-    <script>
-      (function () {
-        try {
-          var params = new URLSearchParams(window.location.search || '');
-          var hash = window.location.hash || '';
-          if (!(params.get('code') || params.get('error')) && hash.indexOf('=') >= 0) {
-            params = new URLSearchParams(hash.charAt(0) === '#' ? hash.slice(1) : hash);
-          }
-          var code = params.get('code');
-          var state = params.get('state');
-          var error = params.get('error_description') || params.get('error');
-          if (!(code || error)) {
-            return;
-          }
-          var payload = {type: 'phonemos:oauth', code: code, state: state, error: error, ts: Date.now()};
-          var serialized = JSON.stringify(payload);
-          try { window.name = 'phonemos-oauth:' + serialized; } catch (e) {}
-          try {
-            if (window.opener) {
-              // Opener is about:srcdoc — must use '*' or the message is dropped.
-              window.opener.postMessage(payload, '*');
-            }
-          } catch (e) {}
-        } catch (e) {}
-      })();
-    </script>
     <script type="module" src="index.tsx"></script>
   </body>
 </html>

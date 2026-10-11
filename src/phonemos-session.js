@@ -1,7 +1,7 @@
 /**
  * Per-user Phonemos OAuth state (User extension properties).
  * Tokens, in-flight login, pending code, and rate limits stay off shared AppGlobalStorage.
- * Legacy global maps are cleared on write but no longer used for auth decisions.
+ * Legacy global maps are nulled once from POST handlers and are not used for auth.
  */
 const http = require('@jetbrains/youtrack-scripting-api/http');
 const urlSafety = require('./url-safety');
@@ -72,41 +72,19 @@ function parseTokenEntry(raw) {
   };
 }
 
-function readLegacyMap(ctx, propertyName) {
-  const raw =
-    ctx.globalStorage && ctx.globalStorage.extensionProperties
-      ? ctx.globalStorage.extensionProperties[propertyName]
-      : null;
-  if (!raw) {
-    return {};
-  }
-  const parsed = parseJsonObject(raw);
-  return parsed || {};
-}
-
-function writeLegacyMap(ctx, propertyName, map) {
+/**
+ * Drop leftover plaintext token maps on AppGlobalStorage.
+ * Call only from POST handlers — YouTrack forbids database writes on GET.
+ */
+function purgeLegacyGlobalSecrets(ctx) {
   if (!ctx.globalStorage || !ctx.globalStorage.extensionProperties) {
     return;
   }
-  ctx.globalStorage.extensionProperties[propertyName] = JSON.stringify(map);
-}
-
-function clearLegacyMapEntry(ctx, propertyName, key) {
-  if (!key) {
-    return;
-  }
-  const map = readLegacyMap(ctx, propertyName);
-  if (!map[key]) {
-    return;
-  }
-  delete map[key];
-  writeLegacyMap(ctx, propertyName, map);
-}
-
-function clearLegacyUserTokens(ctx) {
-  const userId = currentUserId(ctx);
-  if (userId) {
-    clearLegacyMapEntry(ctx, 'oauthSessions', userId);
+  const props = ctx.globalStorage.extensionProperties;
+  if (props.oauthSessions || props.oauthLogins || props.oauthPending) {
+    props.oauthSessions = null;
+    props.oauthLogins = null;
+    props.oauthPending = null;
   }
 }
 
@@ -129,7 +107,6 @@ function writeUserTokens(ctx, tokens) {
     expiresAt: tokens.expiresAt != null ? Number(tokens.expiresAt) : null,
     ts: Date.now(),
   });
-  clearLegacyUserTokens(ctx);
   return true;
 }
 
@@ -138,7 +115,6 @@ function clearUserTokens(ctx) {
   if (props) {
     props.phonemosOAuthSession = null;
   }
-  clearLegacyUserTokens(ctx);
   return !!props || !!currentUserId(ctx);
 }
 
@@ -153,7 +129,6 @@ function storeLogin(ctx, state, codeVerifier, redirectUri) {
     redirectUri: String(redirectUri),
     ts: Date.now(),
   });
-  clearLegacyMapEntry(ctx, 'oauthLogins', String(state));
   return true;
 }
 
@@ -166,13 +141,17 @@ function readLogin(ctx, state) {
     return null;
   }
   const entry = parseJsonObject(props.phonemosOAuthLogin);
+  if (!entry) {
+    return null;
+  }
+  if (!entry.ts || Date.now() - Number(entry.ts) > OAUTH_TTL_MS) {
+    props.phonemosOAuthLogin = null;
+    return null;
+  }
   if (
-    entry &&
     String(entry.state) === String(state) &&
     entry.codeVerifier &&
-    entry.redirectUri &&
-    entry.ts &&
-    Date.now() - Number(entry.ts) <= OAUTH_TTL_MS
+    entry.redirectUri
   ) {
     return {
       codeVerifier: String(entry.codeVerifier),
@@ -191,9 +170,6 @@ function clearLogin(ctx, state) {
       props.phonemosOAuthLogin = null;
     }
   }
-  if (state) {
-    clearLegacyMapEntry(ctx, 'oauthLogins', String(state));
-  }
 }
 
 function storePendingResult(ctx, state, code, error) {
@@ -207,7 +183,6 @@ function storePendingResult(ctx, state, code, error) {
     error: error || null,
     ts: Date.now(),
   });
-  clearLegacyMapEntry(ctx, 'oauthPending', String(state));
   return true;
 }
 
@@ -220,12 +195,14 @@ function readPendingResult(ctx, state) {
     return null;
   }
   const entry = parseJsonObject(props.phonemosOAuthPending);
-  if (
-    entry &&
-    String(entry.state) === String(state) &&
-    entry.ts &&
-    Date.now() - Number(entry.ts) <= OAUTH_TTL_MS
-  ) {
+  if (!entry) {
+    return null;
+  }
+  if (!entry.ts || Date.now() - Number(entry.ts) > OAUTH_TTL_MS) {
+    props.phonemosOAuthPending = null;
+    return null;
+  }
+  if (String(entry.state) === String(state)) {
     return {
       code: entry.code || null,
       error: entry.error || null,
@@ -256,9 +233,6 @@ function clearPendingResult(ctx, state) {
     if (!state || (entry && String(entry.state) === String(state))) {
       props.phonemosOAuthPending = null;
     }
-  }
-  if (state) {
-    clearLegacyMapEntry(ctx, 'oauthPending', String(state));
   }
 }
 
@@ -364,12 +338,146 @@ function revokeRefreshToken(settings, refreshToken) {
   }
 }
 
+function accessTokenStillUsable(tokens) {
+  if (!tokens || !tokens.accessToken) {
+    return false;
+  }
+  return !(tokens.expiresAt && tokens.expiresAt <= Date.now());
+}
+
+function isInvalidGrant(serviceResponse) {
+  const data = parseJsonSafe(serviceResponse);
+  return !!(data && String(data.error) === 'invalid_grant');
+}
+
+function concurrentRefreshWon(latest, sentRefreshToken) {
+  return !!(
+    latest &&
+    latest.refreshToken &&
+    latest.refreshToken !== sentRefreshToken &&
+    accessTokenStillUsable(latest)
+  );
+}
+
+/**
+ * Refresh the stored session for this user.
+ * Clears tokens only when Keycloak returns invalid_grant and no other request
+ * already stored a newer refresh token. Timeouts and 5xx leave the session in place.
+ */
+function refreshStoredTokens(ctx, settings) {
+  const tokens = readUserTokens(ctx);
+  if (!tokens || !tokens.refreshToken) {
+    return {
+      ok: false,
+      reason: 'not_connected',
+      message: 'No stored refresh token for this user. Connect to Phonemos again.',
+    };
+  }
+  if (!settings.oauthClientId || settings.oauthClientSecret == null || !settings.oauthTokenUrl) {
+    return {
+      ok: false,
+      reason: 'misconfigured',
+      message: 'OAuth token settings are incomplete.',
+    };
+  }
+
+  const sentRefreshToken = tokens.refreshToken;
+  let serviceResponse = null;
+  try {
+    serviceResponse = exchangeRefreshToken(settings, sentRefreshToken);
+  } catch (e) {
+    const latest = readUserTokens(ctx);
+    if (concurrentRefreshWon(latest, sentRefreshToken)) {
+      return {ok: true, accessToken: latest.accessToken, tokens: latest};
+    }
+    return {
+      ok: false,
+      reason: 'refresh_failed',
+      message: 'Phonemos session refresh failed. Connect again.',
+    };
+  }
+
+  const latest = readUserTokens(ctx);
+  if (concurrentRefreshWon(latest, sentRefreshToken)) {
+    return {ok: true, accessToken: latest.accessToken, tokens: latest};
+  }
+
+  if (!serviceResponse || !serviceResponse.isSuccess) {
+    if (isInvalidGrant(serviceResponse)) {
+      const again = readUserTokens(ctx);
+      if (concurrentRefreshWon(again, sentRefreshToken)) {
+        return {ok: true, accessToken: again.accessToken, tokens: again};
+      }
+      if (!again || !again.refreshToken || again.refreshToken === sentRefreshToken) {
+        clearUserTokens(ctx);
+      }
+    }
+    return {
+      ok: false,
+      reason: 'refresh_failed',
+      message: 'Phonemos session refresh failed. Connect again.',
+    };
+  }
+
+  const data = parseJsonSafe(serviceResponse);
+  if (!data || !data.access_token) {
+    const again = readUserTokens(ctx);
+    if (concurrentRefreshWon(again, sentRefreshToken)) {
+      return {ok: true, accessToken: again.accessToken, tokens: again};
+    }
+    return {
+      ok: false,
+      reason: 'refresh_failed',
+      message: 'Phonemos session refresh failed. Connect again.',
+    };
+  }
+
+  const expiresIn = data.expires_in != null ? Number(data.expires_in) : null;
+  const next = {
+    accessToken: data.access_token,
+    refreshToken: data.refresh_token || sentRefreshToken,
+    expiresAt: expiresIn ? Date.now() + expiresIn * 1000 - 30 * 1000 : null,
+  };
+  const beforeWrite = readUserTokens(ctx);
+  if (concurrentRefreshWon(beforeWrite, sentRefreshToken)) {
+    return {ok: true, accessToken: beforeWrite.accessToken, tokens: beforeWrite};
+  }
+  if (!writeUserTokens(ctx, next)) {
+    return {
+      ok: false,
+      reason: 'store_failed',
+      message: 'Unable to store Phonemos session for this YouTrack user.',
+    };
+  }
+  return {ok: true, accessToken: next.accessToken, tokens: next};
+}
+
+/**
+ * Revoke the stored refresh token at Keycloak, then delete the local session.
+ * Used for logout and for a Phonemos 401. Not used when refresh fails transiently.
+ */
+function disconnectUser(ctx, settings) {
+  const stored = readUserTokens(ctx);
+  const refreshToken = stored && stored.refreshToken ? stored.refreshToken : null;
+  if (
+    refreshToken &&
+    settings &&
+    settings.oauthClientId &&
+    settings.oauthClientSecret != null &&
+    settings.oauthTokenUrl
+  ) {
+    revokeRefreshToken(settings, refreshToken);
+  }
+  clearUserTokens(ctx);
+  return true;
+}
+
 /**
  * Return a usable access token for the current YouTrack user from server storage.
  * Refreshes via Keycloak when expired. Never trusts client-supplied tokens.
  */
 function ensureAccessToken(ctx, settings) {
-  let tokens = readUserTokens(ctx);
+  const tokens = readUserTokens(ctx);
   if (!tokens) {
     return {ok: false, reason: 'not_connected', message: 'Connect to Phonemos first.'};
   }
@@ -388,42 +496,11 @@ function ensureAccessToken(ctx, settings) {
     };
   }
 
-  if (!settings.oauthClientId || settings.oauthClientSecret == null || !settings.oauthTokenUrl) {
-    return {
-      ok: false,
-      reason: 'misconfigured',
-      message: 'OAuth token settings are incomplete.',
-    };
+  const refreshed = refreshStoredTokens(ctx, settings);
+  if (!refreshed.ok) {
+    return refreshed;
   }
-
-  const serviceResponse = exchangeRefreshToken(settings, tokens.refreshToken);
-  if (!serviceResponse || !serviceResponse.isSuccess) {
-    clearUserTokens(ctx);
-    return {
-      ok: false,
-      reason: 'refresh_failed',
-      message: 'Phonemos session refresh failed. Connect again.',
-    };
-  }
-
-  const data = parseJsonSafe(serviceResponse);
-  if (!data || !data.access_token) {
-    clearUserTokens(ctx);
-    return {
-      ok: false,
-      reason: 'refresh_failed',
-      message: 'Phonemos session refresh failed. Connect again.',
-    };
-  }
-
-  const expiresIn = data.expires_in != null ? Number(data.expires_in) : null;
-  const next = {
-    accessToken: data.access_token,
-    refreshToken: data.refresh_token || tokens.refreshToken,
-    expiresAt: expiresIn ? Date.now() + expiresIn * 1000 - 30 * 1000 : null,
-  };
-  writeUserTokens(ctx, next);
-  return {ok: true, accessToken: next.accessToken};
+  return {ok: true, accessToken: refreshed.accessToken};
 }
 
 exports.currentUserId = currentUserId;
@@ -440,4 +517,7 @@ exports.consumePendingResult = consumePendingResult;
 exports.clearPendingResult = clearPendingResult;
 exports.consumeOAuthRateLimit = consumeOAuthRateLimit;
 exports.ensureAccessToken = ensureAccessToken;
+exports.refreshStoredTokens = refreshStoredTokens;
+exports.disconnectUser = disconnectUser;
+exports.purgeLegacyGlobalSecrets = purgeLegacyGlobalSecrets;
 exports.revokeRefreshToken = revokeRefreshToken;

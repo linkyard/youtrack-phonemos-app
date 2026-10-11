@@ -6,7 +6,7 @@
 export const OAUTH_POPUP_CALLBACK_FILE = 'oauth-popup-callback.html';
 
 function isYouTrackAppShellUrl(url: string): boolean {
-  return /\/app\/[^/]+\/oauth-callback/i.test(url);
+  return /\/app\/[^/]+\/(?:search|oauth-callback)(?:[/?#]|$)/i.test(url);
 }
 
 function isUsableRedirectUri(url: string): boolean {
@@ -119,7 +119,7 @@ export function deriveOAuthCallbackUrl(): string | null {
       const current = new URL(window.location.href);
       current.search = '';
       current.hash = '';
-      if (/suggested-kb|oauth-callback/i.test(current.href)) {
+      if (/\/widgets\/(?:suggested-kb|search|oauth-callback)\//i.test(current.href)) {
         const path = current.pathname.replace(/\/widgets\/[^/]+\/.*$/i, `/widgets/${OAUTH_POPUP_CALLBACK_FILE}`);
         if (path.includes('/widgets/')) {
           current.pathname = path;
@@ -142,11 +142,6 @@ export function resolveOAuthRedirectUri(configured?: string): string {
 
   const trimmed = configured?.trim() || '';
   if (isUsableRedirectUri(trimmed) && /appResources/i.test(trimmed)) {
-    return trimmed;
-  }
-
-  if (isUsableRedirectUri(trimmed) && !isYouTrackAppShellUrl(trimmed)) {
-    // Allow an explicit admin override (e.g. while testing), but prefer appResources.
     return trimmed;
   }
 

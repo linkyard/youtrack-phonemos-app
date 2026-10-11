@@ -27,24 +27,11 @@ type SuggestionItem = {
   href: string;
 };
 
-type SearchAttempt = {
-  label?: string;
-  mode?: string;
-  objectTypes?: string;
-  status?: number;
-  hits?: number;
-  error?: string;
-};
-
 type SuggestionsResponse = {
   success: boolean;
   message?: string;
   needsAuth?: boolean;
   mode?: string;
-  query?: string;
-  queryLabel?: string;
-  within?: string;
-  attempts?: SearchAttempt[];
   items?: SuggestionItem[];
 };
 
@@ -58,12 +45,10 @@ const AppComponent: React.FunctionComponent = () => {
   const [items, setItems] = useState<SuggestionItem[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [mode, setMode] = useState<string | null>(null);
-  const [debug, setDebug] = useState<string | null>(null);
 
   const loadSuggestions = useCallback(async () => {
     setStatus('loading');
     setError(null);
-    setDebug(null);
     try {
       // Ensure a server-side session exists; tokens never enter the widget.
       const session = await ensurePhonemosTokens(host);
@@ -79,20 +64,13 @@ const AppComponent: React.FunctionComponent = () => {
         body: {},
       });
       if (!response.success) {
-        if (
-          response.needsAuth ||
-          /401|403|unauthorized|invalid.?token|invalid.?bearer|connect to phonemos/i.test(
-            response.message || '',
-          )
-        ) {
-          await clearPhonemosSession(host);
+        if (response.needsAuth) {
           setConnected(false);
-          if (response.needsAuth && /connect to phonemos first/i.test(response.message || '')) {
-            setStatus('needs-auth');
-            return;
+          const message = response.message || '';
+          if (message && !/connect to phonemos first/i.test(message)) {
+            setError(message);
           }
-          setError(response.message || 'Phonemos rejected the access token.');
-          setStatus('error');
+          setStatus('needs-auth');
           return;
         }
         throw new Error(response.message || 'Unable to load suggestions.');
@@ -100,21 +78,6 @@ const AppComponent: React.FunctionComponent = () => {
       const nextItems = response.items || [];
       setItems(nextItems);
       setMode(response.mode || null);
-      if (!nextItems.length) {
-        const attemptLines = (response.attempts || []).map((attempt) =>
-          `${attempt.label || '?'}/${attempt.mode || '?'} types=${attempt.objectTypes || '?'} ` +
-          `status=${attempt.status ?? '?'} hits=${attempt.hits ?? 0}` +
-          (attempt.error ? ` error=${attempt.error}` : ''),
-        );
-        setDebug(
-          [
-            `queryLabel=${response.queryLabel || ''}`,
-            `query=${response.query || ''}`,
-            `within=${response.within || ''}`,
-            ...attemptLines,
-          ].join('\n'),
-        );
-      }
       setStatus(nextItems.length ? 'ready' : 'empty');
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Unable to load suggestions.');
@@ -140,7 +103,6 @@ const AppComponent: React.FunctionComponent = () => {
 
   const onDisconnect = useCallback(async () => {
     setError(null);
-    setDebug(null);
     setItems([]);
     setMode(null);
     setConnected(false);
@@ -176,7 +138,7 @@ const AppComponent: React.FunctionComponent = () => {
       {status === 'needs-auth' && (
         <div className="stack">
           <p className="muted">
-            Sign in to Phonemos to see articles you can access for this ticket.
+            {error || 'Sign in to Phonemos to see articles you can access for this ticket.'}
           </p>
           <Button primary onClick={() => void onConnect()}>
             Connect to Phonemos
@@ -190,11 +152,6 @@ const AppComponent: React.FunctionComponent = () => {
       {status === 'empty' && (
         <div className="stack">
           <p className="muted">No matching articles</p>
-          {debug && (
-            <p className="muted" style={{whiteSpace: 'pre-wrap', fontSize: '11px'}}>
-              {debug}
-            </p>
-          )}
           <Button onClick={() => void loadSuggestions()}>Retry</Button>
         </div>
       )}

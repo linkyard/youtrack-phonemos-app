@@ -4,7 +4,6 @@ import Input from '@jetbrains/ring-ui-built/components/input/input';
 import Link from '@jetbrains/ring-ui-built/components/link/link';
 import LoaderInline from '@jetbrains/ring-ui-built/components/loader-inline/loader-inline';
 
-import {publishOAuthResult, readOAuthParamsFromHost} from '../shared/oauth-result';
 import {
   clearPhonemosSession,
   connectPhonemos,
@@ -14,50 +13,7 @@ import {
 
 import phonemosLogo from './phonemos-logo-full.svg?url';
 
-function closePopup(): void {
-  window.setTimeout(() => {
-    try {
-      window.top?.close();
-    } catch {
-      // ignore
-    }
-    try {
-      window.close();
-    } catch {
-      // ignore
-    }
-  }, 500);
-}
-
-function paramsFromLocation(location: {search?: string; hash?: string} | null | undefined): URLSearchParams {
-  if (!location) {
-    return new URLSearchParams();
-  }
-  const fromSearch = new URLSearchParams(location.search || '');
-  if (fromSearch.get('code') || fromSearch.get('error') || fromSearch.get('state')) {
-    return fromSearch;
-  }
-  if (location.hash) {
-    const hash = location.hash.startsWith('#') ? location.hash.slice(1) : location.hash;
-    if (hash.includes('=')) {
-      return new URLSearchParams(hash);
-    }
-  }
-  return fromSearch;
-}
-
-function readStandaloneParams(): URLSearchParams {
-  return paramsFromLocation({
-    search: window.location.search,
-    hash: window.location.hash,
-  });
-}
-
-function hasOAuthResponse(params: URLSearchParams): boolean {
-  return Boolean(params.get('code') || params.get('error') || params.get('error_description'));
-}
-
-type Mode = 'checking' | 'home' | 'completing' | 'done' | 'error';
+type Mode = 'checking' | 'home' | 'error';
 
 type SearchHit = {
   objectId: string;
@@ -92,101 +48,20 @@ const AppComponent: React.FunctionComponent = () => {
 
   useEffect(() => {
     let cancelled = false;
-    let completed = false;
-
-    const finishWithParams = async (
-      params: URLSearchParams,
-      api?: Awaited<ReturnType<typeof YTApp.register>>,
-    ) => {
-      if (cancelled || completed) {
-        return;
-      }
-      const code = params.get('code');
-      const state = params.get('state');
-      const error = params.get('error_description') || params.get('error');
-      if (!(code || error)) {
-        return;
-      }
-      completed = true;
-      setMode('completing');
-      setMessage('Completing Phonemos sign-in…');
-
-      if (api) {
-        await publishOAuthResult(api, {code, state, error});
-      } else {
-        // Standalone static HTML (Keycloak redirected here top-level).
-        const payload = {
-          type: 'phonemos:oauth' as const,
-          code,
-          state,
-          error,
-          ts: Date.now(),
-        };
-        try {
-          window.name = `phonemos-oauth:${JSON.stringify(payload)}`;
-        } catch {
-          // ignore
-        }
-        try {
-          // Opener is about:srcdoc — must use '*' or the message is dropped.
-          (window.opener || window.top?.opener)?.postMessage(payload, '*');
-        } catch {
-          // ignore
-        }
-      }
-
-      if (cancelled) {
-        return;
-      }
-      setMode('done');
-      setMessage(error ? `Sign-in failed: ${error}` : 'Signed in. You can close this window.');
-      closePopup();
-    };
 
     void (async () => {
       try {
-        // OAuth redirect with code/error — keep the callback path intact.
-        if (hasOAuthResponse(readStandaloneParams())) {
-          await finishWithParams(readStandaloneParams());
-          if (completed || cancelled) {
-            return;
-          }
-        }
-
         if (typeof YTApp === 'undefined') {
           setMode('home');
-          setMessage('Open Phonemos from a YouTrack ticket to connect and see article suggestions.');
+          setMessage('This page is the Phonemos search menu. Open it from the YouTrack main menu.');
           return;
         }
 
-        let api!: Awaited<ReturnType<typeof YTApp.register>>;
-        api = await YTApp.register({
-          onAppLocationChange: (location) => {
-            void finishWithParams(paramsFromLocation(location), api);
-          },
-        });
+        const api = await YTApp.register();
         if (cancelled) {
           return;
         }
         setHost(api);
-
-        // Brief wait in case Keycloak landed on /app/phonemos/oauth-callback?... via Host navigation.
-        const started = Date.now();
-        while (!cancelled && !completed && Date.now() - started < 1_500) {
-          const params = await readOAuthParamsFromHost(api);
-          if (hasOAuthResponse(params)) {
-            await finishWithParams(params, api);
-            if (completed) {
-              return;
-            }
-          }
-          await new Promise((resolve) => window.setTimeout(resolve, 200));
-        }
-
-        if (cancelled || completed) {
-          return;
-        }
-
         await refreshConnection(api);
         if (!cancelled) {
           setMode('home');
@@ -318,7 +193,7 @@ const AppComponent: React.FunctionComponent = () => {
     </header>
   );
 
-  if (mode === 'checking' || mode === 'completing') {
+  if (mode === 'checking') {
     return (
       <div className="page">
         <div className="shell">
@@ -332,23 +207,6 @@ const AppComponent: React.FunctionComponent = () => {
               <LoaderInline />
               <p>{message}</p>
             </div>
-          </div>
-        </div>
-      </div>
-    );
-  }
-
-  if (mode === 'done') {
-    return (
-      <div className="page">
-        <div className="shell">
-          <header className="hero">
-            <div className="hero-main">
-              <img className="logo" src={phonemosLogo} alt="Phonemos" width={333} height={72} />
-            </div>
-          </header>
-          <div className="panel">
-            <p className="empty-state">{message}</p>
           </div>
         </div>
       </div>

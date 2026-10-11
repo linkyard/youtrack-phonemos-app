@@ -21,13 +21,15 @@ Phonemos GmbH does not operate the YouTrack site on which the app is installed, 
 
 The app runs inside YouTrack. It does not run on a Phonemos GmbH server, and it does not send usage statistics to Phonemos GmbH.
 
-After a user chooses **Connect to Phonemos**, the app does the following.
+After a user chooses **Connect to Phonemos** on a ticket, or **Connect** on the Phonemos search menu item, the app does the following.
 
-**Sign-in.** The app starts an OAuth 2.0 authorisation-code flow with PKCE against the Keycloak identity provider configured by the YouTrack administrator. YouTrack stores, for that user, the access token, the refresh token if one is issued, and the expiry time. The app uses these tokens only to call the configured Phonemos site as that user. Disconnecting removes the stored tokens.
+**Sign-in.** The app starts an OAuth 2.0 authorisation-code flow with PKCE against the Keycloak identity provider configured by the YouTrack administrator. YouTrack stores, for that user, the access token, the refresh token if one is issued, and the expiry time. The access token is sent only to the configured Phonemos site, as that user. The refresh token is sent only to the configured Keycloak token endpoint: to refresh the session, and on disconnect to the revocation URL derived from that endpoint (`…/token` becomes `…/revoke`) when that URL can be derived. Disconnecting removes the stored tokens either way.
 
-**Search.** While the user is connected, opening a ticket sends a search query to the configured Phonemos site. The query is built from that ticket’s summary, description, and the latest comment written by the reporter. Markup is stripped. The query is limited in length. The request also includes the configured search-root object and a result limit. Phonemos applies that user’s own permissions and returns matching pages (title, extract, and link). The app does not write those results back to Phonemos.
+**Ticket search.** While the user is connected, opening a ticket sends search queries to the configured Phonemos site. Queries are built from that ticket’s summary, a title search (`#` plus the summary), and the summary together with the description and the latest comment written by the reporter. Markup is stripped. Each query is limited to 3500 characters. The request also includes the configured search-root object and the project result limit. Phonemos applies that user’s own permissions and returns matching pages (title, extract, and link). The app does not write those results back to Phonemos.
 
-The app does not sell personal data and does not use ticket content for advertising, training, or product analytics.
+**Menu search.** The Phonemos item in the YouTrack main menu lets a connected user type a search query. That query, limited to 500 characters, is sent to the same Phonemos site. The app first asks Phonemos which site it is (`GET /_api/rest/v1/sites/self`) and searches within that site, so the project search root is not used. Results are the pages that user can access (title, extract, and link). The app does not write those results back to Phonemos.
+
+The app does not sell personal data and does not use ticket content or search queries for advertising, training, or product analytics.
 
 ## 3 Legal basis
 
@@ -37,13 +39,13 @@ Sign-in is started by the user. The app does not search Phonemos until that user
 
 ## 4 Recipients and transfers
 
-The only recipient of ticket text and of the OAuth token is the Phonemos site named in the app settings. That transfer uses HTTPS.
+Ticket text and menu search queries go to the Phonemos site named in the app settings, together with the access token. The refresh token goes to the Keycloak identity provider configured in the app settings (the token endpoint on refresh, and the revocation endpoint on disconnect). Those transfers use HTTPS.
 
 No other processor is added by the app. Hosting, subprocessors, and international transfers for a Phonemos Cloud site are those already described in the Phonemos privacy policy and the Data Processing Agreement. A self-hosted Phonemos site is governed by its own operator.
 
 ## 5 Retention
 
-OAuth tokens remain in the customer’s YouTrack until the user disconnects, an administrator removes the app, or the tokens are replaced on refresh. The app does not keep a copy of search queries after the request to Phonemos completes. Retention of content inside Phonemos is governed by that Phonemos site, not by this app.
+OAuth tokens remain in the customer’s YouTrack until the user disconnects, an administrator removes the app, or the tokens are replaced on refresh. Disconnect also asks Keycloak to revoke the refresh token when the revocation URL can be derived from the token URL. The app does not keep a copy of search queries after the request to Phonemos completes. Retention of content inside Phonemos is governed by that Phonemos site, not by this app.
 
 ## 6 Your rights
 
@@ -53,4 +55,4 @@ For data in a customer’s YouTrack or in a Phonemos site the customer operates,
 
 ## 7 Changes
 
-This notice was first published in October 2026. Phonemos GmbH will update it when the app’s processing changes.
+This notice was first published in October 2026 and updated the same month to cover main-menu search and refresh-token revocation. Phonemos GmbH will update it when the app’s processing changes.

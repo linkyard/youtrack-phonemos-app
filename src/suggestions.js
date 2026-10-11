@@ -274,11 +274,10 @@ function resolveSiteObjectId(settings, accessToken) {
   const response = connection.getSync('/_api/rest/v1/sites/self', null);
   if (!response || !response.isSuccess) {
     const code = response && response.code != null ? response.code : 'unknown';
-    const body = response && response.body != null ? String(response.body).substring(0, 200) : '';
     return {
       ok: false,
-      message:
-        'Unable to resolve Phonemos site (HTTP ' + code + ')' + (body ? ': ' + body : '.'),
+      status: response && response.code != null ? response.code : 0,
+      message: 'Unable to resolve Phonemos site (HTTP ' + code + ').',
     };
   }
   let data = null;
@@ -393,20 +392,19 @@ function runSearchStrategies(settings, accessToken, queries) {
       strategy.objectTypes,
     );
 
-    if (!serviceResponse.isSuccess) {
-      const errBody = serviceResponse.body ? String(serviceResponse.body).substring(0, 200) : '';
+    if (!serviceResponse || !serviceResponse.isSuccess) {
+      const status = serviceResponse && serviceResponse.code != null ? serviceResponse.code : 0;
       attempts.push({
         label: strategy.label,
         mode: strategy.mode,
         objectTypes: strategy.objectTypes ? strategy.objectTypes.join(',') : '(any)',
-        status: serviceResponse.code,
+        status: status,
         hits: 0,
-        error: errBody || ('HTTP ' + serviceResponse.code),
+        failed: true,
       });
       // Keep going — hybrid may 4xx while fulltext works.
       lastError = {
-        code: serviceResponse.code,
-        body: errBody,
+        code: status,
         strategy: strategy,
       };
       continue;
@@ -435,7 +433,7 @@ function runSearchStrategies(settings, accessToken, queries) {
     }
   }
 
-  if (lastError && attempts.every(function (a) { return a.hits === 0 && a.error; })) {
+  if (lastError && attempts.every(function (a) { return a.hits === 0 && a.failed; })) {
     return {
       success: false,
       lastError: lastError,
@@ -484,6 +482,7 @@ exports.httpHandler = {
       path: 'list',
       permissions: ['READ_ISSUE'],
       handle: function handle(ctx) {
+        phonemosSession.purgeLegacyGlobalSecrets(ctx);
         const settings = requireSettings(ctx);
         if (!settings.phonemosBaseUrl) {
           return ctx.response.json({
@@ -538,12 +537,9 @@ exports.httpHandler = {
         const result = runSearchStrategies(settings, accessToken, queries);
         if (!result.success) {
           const err = result.lastError || {};
-          let message =
-            'Phonemos search failed with status ' +
-            err.code +
-            (err.body ? ': ' + err.body : '.');
-          if (err.code === 401 || /unauthorized|invalid.?bearer|invalid.?token/i.test(String(err.body || ''))) {
-            phonemosSession.clearUserTokens(ctx);
+          let message = 'Phonemos search failed with status ' + err.code + '.';
+          if (err.code === 401) {
+            phonemosSession.disconnectUser(ctx, settings);
             message +=
               '\n\nPhonemos rejected the access token. In Keycloak, open this app’s client → Client scopes ' +
               'and assign the realm scope "hasura" as Default (it adds the Hasura claims Phonemos requires). ' +

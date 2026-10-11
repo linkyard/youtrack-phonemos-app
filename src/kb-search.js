@@ -36,6 +36,7 @@ exports.httpHandler = {
       method: 'POST',
       path: 'query',
       handle: function handle(ctx) {
+        phonemosSession.purgeLegacyGlobalSecrets(ctx);
         const authError = phonemosSession.requireInteractiveUser(ctx);
         if (authError) {
           return ctx.response.json({success: false, needsAuth: true, message: authError});
@@ -79,6 +80,14 @@ exports.httpHandler = {
 
         const site = suggestions.resolveSiteObjectId(settings, session.accessToken);
         if (!site.ok) {
+          if (site.status === 401) {
+            phonemosSession.disconnectUser(ctx, settings);
+            return ctx.response.json({
+              success: false,
+              needsAuth: true,
+              message: 'Phonemos rejected the session. Connect again.',
+            });
+          }
           return ctx.response.json({success: false, message: site.message});
         }
         settings.withinObjectId = site.objectId;
@@ -86,12 +95,9 @@ exports.httpHandler = {
         const result = suggestions.searchText(settings, session.accessToken, query);
         if (!result.success) {
           const err = result.lastError || {};
-          let message =
-            'Phonemos search failed with status ' +
-            err.code +
-            (err.body ? ': ' + err.body : '.');
-          if (err.code === 401 || /unauthorized|invalid.?bearer|invalid.?token/i.test(String(err.body || ''))) {
-            phonemosSession.clearUserTokens(ctx);
+          let message = 'Phonemos search failed with status ' + err.code + '.';
+          if (err.code === 401) {
+            phonemosSession.disconnectUser(ctx, settings);
             message = 'Phonemos rejected the session. Connect again.';
           }
           return ctx.response.json({

@@ -90,23 +90,27 @@ function isBlockedHostname(hostname) {
 }
 
 /**
- * OAuth redirect_uri must be the packaged popup callback under YouTrack appResources.
- * Example: https://{host}/api/appResources/{id}/widgets/oauth-popup-callback.html
+ * Hostname from a request Host header. Strips a port and IPv6 brackets.
+ * Default ports (:80 / :443) and non-default ports are ignored so the comparison
+ * is the hostname only.
  */
-function isAllowedOAuthRedirectUri(raw) {
-  const parsed = parseAbsoluteUrl(raw);
-  if (!parsed || parsed.hasUserInfo) {
-    return false;
+function hostNameFromHeader(hostHeader) {
+  const raw = String(hostHeader || '').trim().toLowerCase();
+  if (!raw) {
+    return '';
   }
-  if (isLocalhost(parsed.hostname)) {
-    if (parsed.protocol !== 'http' && parsed.protocol !== 'https') {
-      return false;
-    }
-  } else if (parsed.protocol !== 'https') {
-    return false;
-  } else if (!parsed.hostname || isBlockedHostname(parsed.hostname)) {
-    return false;
+  if (raw.charAt(0) === '[') {
+    const end = raw.indexOf(']');
+    return end > 0 ? raw.substring(1, end) : '';
   }
+  const colon = raw.lastIndexOf(':');
+  if (colon > 0 && raw.indexOf(':') === colon) {
+    return raw.substring(0, colon);
+  }
+  return raw;
+}
+
+function redirectPathAllowed(raw) {
   try {
     const URI = Java.type('java.net.URI');
     const uri = new URI(String(raw).trim());
@@ -118,10 +122,36 @@ function isAllowedOAuthRedirectUri(raw) {
   } catch (e) {
     // Fall through
   }
-  const match = /^https?:\/\/[^/?#]+(\/api\/appResources\/[^/?#]+\/widgets\/oauth-popup-callback\.html)$/i.exec(
+  return /^https?:\/\/[^/?#]+\/api\/appResources\/[^/?#]+\/widgets\/oauth-popup-callback\.html$/i.test(
     String(raw || '').trim(),
   );
-  return !!match;
+}
+
+/**
+ * OAuth redirect_uri must be the packaged popup callback on this YouTrack host.
+ * expectedHost is the request Host header (not X-Forwarded-Host).
+ * Localhost is allowed only when that request host is localhost.
+ * Example: https://{host}/api/appResources/{id}/widgets/oauth-popup-callback.html
+ */
+function isAllowedOAuthRedirectUri(raw, expectedHost) {
+  const parsed = parseAbsoluteUrl(raw);
+  if (!parsed || parsed.hasUserInfo) {
+    return false;
+  }
+  const expected = hostNameFromHeader(expectedHost);
+  if (!expected || parsed.hostname !== expected) {
+    return false;
+  }
+  if (isLocalhost(parsed.hostname)) {
+    if (parsed.protocol !== 'http' && parsed.protocol !== 'https') {
+      return false;
+    }
+  } else if (parsed.protocol !== 'https') {
+    return false;
+  } else if (!parsed.hostname || isBlockedHostname(parsed.hostname)) {
+    return false;
+  }
+  return redirectPathAllowed(raw);
 }
 
 function parseAbsoluteUrl(raw) {
@@ -268,4 +298,5 @@ function revokeUrlFromTokenUrl(tokenUrl) {
 exports.validateHttpsUrl = validateHttpsUrl;
 exports.validateOutboundSettings = validateOutboundSettings;
 exports.isAllowedOAuthRedirectUri = isAllowedOAuthRedirectUri;
+exports.hostNameFromHeader = hostNameFromHeader;
 exports.revokeUrlFromTokenUrl = revokeUrlFromTokenUrl;

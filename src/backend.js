@@ -40,10 +40,6 @@ function writeUserTokens(ctx, tokens) {
   return phonemosSession.writeUserTokens(ctx, tokens);
 }
 
-function clearUserTokens(ctx) {
-  return phonemosSession.clearUserTokens(ctx);
-}
-
 function rejectIfUnauthorized(ctx) {
   return phonemosSession.requireInteractiveUser(ctx);
 }
@@ -77,17 +73,78 @@ function publicSessionResponse(tokens) {
   };
 }
 
-function publicTokenResponse(mapped) {
+function publicTokenResponse(mapped, storedTokens) {
   if (!mapped || typeof mapped !== 'object') {
     return mapped;
+  }
+  let canRefresh;
+  if (mapped.success) {
+    canRefresh = storedTokens ? !!storedTokens.refreshToken : !!mapped.refreshToken;
   }
   return {
     success: mapped.success,
     message: mapped.message,
     connected: !!mapped.success,
     expiresAt: mapped.expiresAt != null ? mapped.expiresAt : null,
-    canRefresh: mapped.success ? true : undefined,
+    canRefresh: canRefresh,
   };
+}
+
+/** Host header only. Do not trust X-Forwarded-Host. */
+function requestHostHeader(ctx) {
+  const headers = ctx.request && ctx.request.headers;
+  if (!headers) {
+    return '';
+  }
+  if (Array.isArray(headers)) {
+    for (let i = 0; i < headers.length; i++) {
+      const item = headers[i];
+      if (!item || item.name == null) {
+        continue;
+      }
+      if (String(item.name).toLowerCase() === 'host') {
+        return item.value != null ? String(item.value) : '';
+      }
+    }
+    return '';
+  }
+  try {
+    if (typeof headers.get === 'function') {
+      const fromGet = headers.get('Host') || headers.get('host');
+      if (fromGet) {
+        return String(fromGet);
+      }
+    }
+  } catch (e) {
+    // ignore
+  }
+  if (headers.Host != null) {
+    return String(headers.Host);
+  }
+  if (headers.host != null) {
+    return String(headers.host);
+  }
+  return '';
+}
+
+/**
+ * Redirect must be the popup callback on this request's host.
+ * When OAuth redirect URI is configured, it must match that value exactly.
+ * Returns an error message, or null when the URI is allowed.
+ */
+function rejectRedirectUri(ctx, settings, redirectUri) {
+  if (!urlSafety.isAllowedOAuthRedirectUri(redirectUri, requestHostHeader(ctx))) {
+    return (
+      'redirect_uri must be the appResources popup callback on this YouTrack host ' +
+      '(…/api/appResources/{id}/widgets/oauth-popup-callback.html).'
+    );
+  }
+  const configured =
+    settings && settings.oauthRedirectUri ? String(settings.oauthRedirectUri).trim() : '';
+  if (configured && String(redirectUri).trim() !== configured) {
+    return 'redirect_uri must match the configured OAuth redirect URI.';
+  }
+  return null;
 }
 
 function trimSetting(value) {
@@ -266,6 +323,7 @@ exports.httpHandler = {
         if (authError) {
           return ctx.response.json({success: false, message: authError});
         }
+        phonemosSession.purgeLegacyGlobalSecrets(ctx);
         const rateError = rejectIfRateLimited(ctx);
         if (rateError) {
           return ctx.response.json({success: false, message: rateError});
@@ -310,13 +368,9 @@ exports.httpHandler = {
             message: 'redirect_uri is required.',
           });
         }
-        if (!urlSafety.isAllowedOAuthRedirectUri(redirectUri)) {
-          return ctx.response.json({
-            success: false,
-            message:
-              'redirect_uri must be the appResources popup callback ' +
-              '(…/api/appResources/{id}/widgets/oauth-popup-callback.html).',
-          });
+        const redirectError = rejectRedirectUri(ctx, settings, redirectUri);
+        if (redirectError) {
+          return ctx.response.json({success: false, message: redirectError});
         }
         if (!storeLogin(ctx, state, codeVerifier, redirectUri)) {
           return ctx.response.json({
@@ -352,6 +406,7 @@ exports.httpHandler = {
         if (authError) {
           return ctx.response.json({success: false, message: authError});
         }
+        phonemosSession.purgeLegacyGlobalSecrets(ctx);
         const body = ctx.request.json() || {};
         const state = body.state;
         const code = body.code || null;
@@ -408,6 +463,17 @@ exports.httpHandler = {
             message: 'Missing app settings: ' + missing.join(', '),
           });
         }
+        const redirectError = rejectRedirectUri(ctx, settings, login.redirectUri);
+        if (redirectError) {
+          clearLogin(ctx, state);
+          clearPendingResult(ctx, state);
+          return ctx.response.json({
+            success: false,
+            connected: false,
+            finalized: false,
+            message: redirectError,
+          });
+        }
         const mapped = mapTokenResponse(
           exchangeToken(settings, {
             grant_type: 'authorization_code',
@@ -449,6 +515,7 @@ exports.httpHandler = {
         if (authError) {
           return ctx.response.json({success: false, message: authError});
         }
+        phonemosSession.purgeLegacyGlobalSecrets(ctx);
         const body = ctx.request.json() || {};
         const state = body.state || ctx.request.getParameter('state');
         if (!state) {
@@ -479,6 +546,7 @@ exports.httpHandler = {
         if (authError) {
           return ctx.response.json({success: false, message: authError});
         }
+        phonemosSession.purgeLegacyGlobalSecrets(ctx);
         const rateError = rejectIfRateLimited(ctx);
         if (rateError) {
           return ctx.response.json({success: false, message: rateError});
@@ -514,12 +582,13 @@ exports.httpHandler = {
             message: 'No in-flight Phonemos login for this state. Start Connect again.',
           });
         }
-        if (!urlSafety.isAllowedOAuthRedirectUri(login.redirectUri)) {
+        const redirectError = rejectRedirectUri(ctx, settings, login.redirectUri);
+        if (redirectError) {
           clearLogin(ctx, state);
           clearPendingResult(ctx, state);
           return ctx.response.json({
             success: false,
-            message: 'Stored redirect_uri is not an allowed appResources callback.',
+            message: redirectError,
           });
         }
 
@@ -548,8 +617,9 @@ exports.httpHandler = {
           }
           clearLogin(ctx, state);
           clearPendingResult(ctx, state);
+          // Do not return refresh tokens to the widget.
+          return ctx.response.json(publicTokenResponse(mapped, tokens));
         }
-        // Do not return refresh tokens to the widget.
         return ctx.response.json(publicTokenResponse(mapped));
       },
     },
@@ -562,6 +632,7 @@ exports.httpHandler = {
         if (authError) {
           return ctx.response.json({success: false, message: authError});
         }
+        phonemosSession.purgeLegacyGlobalSecrets(ctx);
         const rateError = rejectIfRateLimited(ctx);
         if (rateError) {
           return ctx.response.json({success: false, message: rateError});
@@ -579,33 +650,16 @@ exports.httpHandler = {
           });
         }
 
-        // Prefer the server-stored refresh token. Ignore any client-supplied value so
-        // the browser never needs (or can forge) a refresh token.
-        const stored = readUserTokens(ctx);
-        const refreshToken = stored && stored.refreshToken ? stored.refreshToken : null;
-        if (!refreshToken) {
+        // Server-stored refresh token only. A concurrent refresh that already
+        // rotated the token is kept; invalid_grant clears the session.
+        const refreshed = phonemosSession.refreshStoredTokens(ctx, settings);
+        if (!refreshed.ok) {
           return ctx.response.json({
             success: false,
-            message: 'No stored refresh token for this user. Connect to Phonemos again.',
+            message: refreshed.message || 'Phonemos session refresh failed. Connect again.',
           });
         }
-
-        const serviceResponse = exchangeToken(settings, {
-          grant_type: 'refresh_token',
-          refresh_token: refreshToken,
-        });
-        const mapped = mapTokenResponse(serviceResponse);
-        const tokens = tokensFromMappedResponse(mapped);
-        if (tokens) {
-          // Keycloak may omit refresh_token on refresh; keep the previous one.
-          if (!tokens.refreshToken) {
-            tokens.refreshToken = refreshToken;
-          }
-          writeUserTokens(ctx, tokens);
-        } else {
-          clearUserTokens(ctx);
-        }
-        return ctx.response.json(publicTokenResponse(mapped));
+        return ctx.response.json(publicSessionResponse(refreshed.tokens));
       },
     },
     {
@@ -630,21 +684,8 @@ exports.httpHandler = {
         if (authError) {
           return ctx.response.json({success: false, message: authError});
         }
-        const stored = readUserTokens(ctx);
-        const refreshToken = stored && stored.refreshToken ? stored.refreshToken : null;
-        if (refreshToken) {
-          const settings = requireSettings(ctx);
-          const missing = missingSettings(settings, [
-            'oauthClientId',
-            'oauthClientSecret',
-            'oauthTokenUrl',
-          ]);
-          if (!missing.length) {
-            // Best-effort IdP revoke; always clear local session afterward.
-            phonemosSession.revokeRefreshToken(settings, refreshToken);
-          }
-        }
-        clearUserTokens(ctx);
+        phonemosSession.purgeLegacyGlobalSecrets(ctx);
+        phonemosSession.disconnectUser(ctx, requireSettings(ctx));
         clearLogin(ctx, null);
         clearPendingResult(ctx, null);
         return ctx.response.json({success: true, connected: false});
