@@ -24,7 +24,7 @@
     },
     {
       "key": "oauth-callback",
-      "name": "Phonemos sign-in",
+      "name": "Phonemos",
       "indexPath": "oauth-callback/index.html",
       "extensionPoint": "MAIN_MENU_ITEM",
       "iconPath": "oauth-callback/widget-icon.png",
