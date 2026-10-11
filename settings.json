@@ -41,9 +41,9 @@
     },
     "oauthRedirectUri": {
       "title": "OAuth redirect URI",
-      "description": "Must match Keycloak. YouTrack widgets run as about:srcdoc, so use the hosted callback: https://cdn.jsdelivr.net/gh/linkyard/youtrack-phonemos-app@main/public/oauth-popup-callback.html",
+      "description": "Must match Keycloak. YouTrack widgets run as about:srcdoc, so use https://rawcdn.githack.com/linkyard/youtrack-phonemos-oauth-callback/3dbd8da/index.html",
       "type": "string",
-      "default": "https://cdn.jsdelivr.net/gh/linkyard/youtrack-phonemos-app@main/public/oauth-popup-callback.html",
+      "default": "https://rawcdn.githack.com/linkyard/youtrack-phonemos-oauth-callback/3dbd8da/index.html",
       "x-scope": "GLOBAL"
     },
     "withinObjectId": {

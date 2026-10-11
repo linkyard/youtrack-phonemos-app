@@ -49,13 +49,13 @@ npm run pack
 1. Create a **confidential** client with Authorization Code + PKCE (S256).
 2. **Valid redirect URIs** (YouTrack embeds widgets as `about:srcdoc`, so you cannot use `/app/phonemos/...`):
 
-   `https://cdn.jsdelivr.net/gh/linkyard/youtrack-phonemos-app@main/public/oauth-popup-callback.html`
+   `https://rawcdn.githack.com/linkyard/youtrack-phonemos-oauth-callback/3dbd8da/index.html`
 
-   Put the same value in the YouTrack app setting **OAuth redirect URI**.
+   Put the **same** value in the YouTrack app setting **OAuth redirect URI**.
 3. Scopes: at least `openid`.
 4. Put client id/secret and the auth/token URLs into the YouTrack app settings.
 
-The hosted callback page returns the authorization code to the ticket widget via `postMessage` / `window.name`.
+The hosted callback page returns the authorization code to the ticket widget via `postMessage` / `window.name`. Source: [youtrack-phonemos-oauth-callback](https://github.com/linkyard/youtrack-phonemos-oauth-callback).
 
 ### Search
 

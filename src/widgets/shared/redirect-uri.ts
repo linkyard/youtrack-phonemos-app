@@ -1,6 +1,9 @@
-/** Hosted callback used when YouTrack embeds widgets as about:srcdoc (no file URL). */
+/**
+ * Hosted callback used when YouTrack embeds widgets as about:srcdoc (no file URL).
+ * Served as text/html (jsDelivr/gist raw are text/plain + nosniff and will not run JS).
+ */
 export const DEFAULT_POPUP_CALLBACK_URL =
-  'https://cdn.jsdelivr.net/gh/linkyard/youtrack-phonemos-app@main/public/oauth-popup-callback.html';
+  'https://rawcdn.githack.com/linkyard/youtrack-phonemos-oauth-callback/3dbd8da/index.html';
 
 function isYouTrackAppShellUrl(url: string): boolean {
   return /\/app\/[^/]+\/oauth-callback/i.test(url);
