@@ -1,0 +1,26 @@
+{
+  "name": "phonemos",
+  "title": "Phonemos",
+  "description": "Phonemos integration for YouTrack",
+  "$schema": "https://json.schemastore.org/youtrack-app.json",
+  "vendor": {
+    "name": "Phonemos GmbH",
+    "url": "https://phonemos.com"
+  },
+  "icon": "icon.svg",
+  "widgets": [
+
+    {
+      "key": "hello",
+      "name": "Hello",
+      "indexPath": "hello/index.html",
+      "extensionPoint": "ISSUE_BELOW_SUMMARY",
+      "iconPath": "hello/widget-icon.svg",
+      "description": "Hello world",
+      "expectedDimensions": {
+        "width": 640,
+        "height": 64
+      }
+    }
+  ]
+}
