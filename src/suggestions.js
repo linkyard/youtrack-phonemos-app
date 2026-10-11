@@ -215,23 +215,41 @@ function latestReporterComment(issue) {
   return latest ? stripMarkup(latest.text) : '';
 }
 
-function buildSearchQuery(issue) {
-  const parts = [];
-  if (issue.summary) {
-    parts.push(stripMarkup(issue.summary));
+function collapseWs(text) {
+  return String(text || '').replace(/\s+/g, ' ').trim();
+}
+
+function buildSearchQueries(issue) {
+  const summary = collapseWs(stripMarkup(issue && issue.summary));
+  const description = collapseWs(stripMarkup(issue && issue.description));
+  const customerComment = collapseWs(latestReporterComment(issue));
+
+  const queries = [];
+  const pushUnique = function (label, q) {
+    const value = collapseWs(q);
+    if (!value) {
+      return;
+    }
+    const clipped = value.length > MAX_QUERY_CHARS ? value.substring(0, MAX_QUERY_CHARS) : value;
+    for (let i = 0; i < queries.length; i++) {
+      if (queries[i].q === clipped) {
+        return;
+      }
+    }
+    queries.push({label: label, q: clipped});
+  };
+
+  // Short, high-signal first — hybrid often returns empty for long/noisy ticket text
+  // even when a clear title match exists.
+  pushUnique('summary', summary);
+  if (summary) {
+    pushUnique('title', '#' + summary);
   }
-  if (issue.description) {
-    parts.push(stripMarkup(issue.description));
-  }
-  const customerComment = latestReporterComment(issue);
-  if (customerComment) {
-    parts.push(customerComment);
-  }
-  let q = parts.join('\n\n').trim();
-  if (q.length > MAX_QUERY_CHARS) {
-    q = q.substring(0, MAX_QUERY_CHARS);
-  }
-  return q;
+  pushUnique(
+    'full',
+    [summary, description, customerComment].filter(Boolean).join(' '),
+  );
+  return queries;
 }
 
 function base64UrlToString(value) {
@@ -286,16 +304,18 @@ function describeAccessTokenClaims(accessToken) {
   }
 }
 
-function searchPhonemos(settings, accessToken, query, mode) {
+function searchPhonemos(settings, accessToken, query, mode, objectTypes) {
   const limit = settings.searchLimit != null ? Number(settings.searchLimit) : DEFAULT_SEARCH_LIMIT;
   const safeLimit = isNaN(limit) || limit < 1 ? DEFAULT_SEARCH_LIMIT : Math.min(20, Math.floor(limit));
   const payload = {
     q: query,
     within: settings.withinObjectId,
     mode: mode,
-    objectTypes: ['wikipage'],
     limit: safeLimit,
   };
+  if (objectTypes && objectTypes.length) {
+    payload.objectTypes = objectTypes;
+  }
 
   const connection = new http.Connection(settings.phonemosBaseUrl);
   connection.addHeader('Authorization', 'Bearer ' + accessToken);
@@ -304,17 +324,132 @@ function searchPhonemos(settings, accessToken, query, mode) {
   return connection.postSync('/_api/rest/v1/objects-search', null, JSON.stringify(payload));
 }
 
+function extractHitList(data) {
+  if (!data || typeof data !== 'object') {
+    return [];
+  }
+  if (Array.isArray(data.items)) {
+    return data.items;
+  }
+  if (Array.isArray(data.results)) {
+    return data.results;
+  }
+  if (Array.isArray(data.hits)) {
+    return data.hits;
+  }
+  if (Array.isArray(data.objects)) {
+    return data.objects;
+  }
+  return [];
+}
+
 function mapSearchHits(settings, data) {
-  const items = (data && data.items) || [];
-  return items.map(function (item) {
+  return extractHitList(data).map(function (item) {
+    const objectId = item.objectId || item.id || item.object_id;
     return {
-      objectId: item.objectId,
-      name: item.name,
-      extract: item.extract || '',
-      href: objectHref(settings.phonemosBaseUrl, item.objectId),
+      objectId: objectId,
+      name: item.name || item.title || item.label || String(objectId || ''),
+      extract: item.extract || item.snippet || item.summary || '',
+      href: objectHref(settings.phonemosBaseUrl, objectId),
       score: item.score,
     };
+  }).filter(function (item) {
+    return !!item.objectId;
   });
+}
+
+function runSearchStrategies(settings, accessToken, queries) {
+  const strategies = [];
+  const modes = ['hybrid', 'fulltext'];
+  const typeOptions = [['wikipage'], null];
+
+  for (let qi = 0; qi < queries.length; qi++) {
+    for (let mi = 0; mi < modes.length; mi++) {
+      for (let ti = 0; ti < typeOptions.length; ti++) {
+        strategies.push({
+          label: queries[qi].label,
+          q: queries[qi].q,
+          mode: modes[mi],
+          objectTypes: typeOptions[ti],
+        });
+      }
+    }
+  }
+
+  const attempts = [];
+  let lastError = null;
+
+  for (let i = 0; i < strategies.length; i++) {
+    const strategy = strategies[i];
+    const serviceResponse = searchPhonemos(
+      settings,
+      accessToken,
+      strategy.q,
+      strategy.mode,
+      strategy.objectTypes,
+    );
+
+    if (!serviceResponse.isSuccess) {
+      const errBody = serviceResponse.body ? String(serviceResponse.body).substring(0, 200) : '';
+      attempts.push({
+        label: strategy.label,
+        mode: strategy.mode,
+        objectTypes: strategy.objectTypes ? strategy.objectTypes.join(',') : '(any)',
+        status: serviceResponse.code,
+        hits: 0,
+        error: errBody || ('HTTP ' + serviceResponse.code),
+      });
+      // Keep going — hybrid may 4xx while fulltext works.
+      lastError = {
+        code: serviceResponse.code,
+        body: errBody,
+        strategy: strategy,
+      };
+      continue;
+    }
+
+    const data = parseJsonSafe(serviceResponse) || {};
+    const items = mapSearchHits(settings, data);
+    attempts.push({
+      label: strategy.label,
+      mode: strategy.mode,
+      objectTypes: strategy.objectTypes ? strategy.objectTypes.join(',') : '(any)',
+      status: serviceResponse.code,
+      hits: items.length,
+      responseKeys: data && typeof data === 'object' ? Object.keys(data).slice(0, 8).join(',') : '',
+    });
+
+    if (items.length) {
+      return {
+        success: true,
+        query: strategy.q,
+        queryLabel: strategy.label,
+        mode: data.mode || strategy.mode,
+        items: items,
+        attempts: attempts,
+        within: settings.withinObjectId,
+      };
+    }
+  }
+
+  if (lastError && attempts.every(function (a) { return a.hits === 0 && a.error; })) {
+    return {
+      success: false,
+      lastError: lastError,
+      attempts: attempts,
+      within: settings.withinObjectId,
+    };
+  }
+
+  return {
+    success: true,
+    query: queries.length ? queries[0].q : '',
+    queryLabel: queries.length ? queries[0].label : '',
+    mode: 'fulltext',
+    items: [],
+    attempts: attempts,
+    within: settings.withinObjectId,
+  };
 }
 
 exports.httpHandler = {
@@ -353,30 +488,26 @@ exports.httpHandler = {
           });
         }
 
-        const query = buildSearchQuery(ctx.issue);
-        if (!query) {
+        const queries = buildSearchQueries(ctx.issue);
+        if (!queries.length) {
           return ctx.response.json({
             success: true,
             query: '',
             mode: 'hybrid',
             items: [],
+            within: settings.withinObjectId,
+            attempts: [],
           });
         }
 
-        let mode = 'hybrid';
-        let serviceResponse = searchPhonemos(settings, body.accessToken, query, mode);
-        if (!serviceResponse.isSuccess && serviceResponse.code >= 400 && serviceResponse.code < 500) {
-          mode = 'fulltext';
-          serviceResponse = searchPhonemos(settings, body.accessToken, query, mode);
-        }
-
-        if (!serviceResponse.isSuccess) {
-          const errBody = serviceResponse.body ? String(serviceResponse.body).substring(0, 300) : '';
+        const result = runSearchStrategies(settings, body.accessToken, queries);
+        if (!result.success) {
+          const err = result.lastError || {};
           let message =
             'Phonemos search failed with status ' +
-            serviceResponse.code +
-            (errBody ? ': ' + errBody : '.');
-          if (serviceResponse.code === 401 || /unauthorized|invalid.?bearer|invalid.?token/i.test(errBody)) {
+            err.code +
+            (err.body ? ': ' + err.body : '.');
+          if (err.code === 401 || /unauthorized|invalid.?bearer|invalid.?token/i.test(String(err.body || ''))) {
             message +=
               '\n\nPhonemos rejected the access token. In Keycloak, open this app’s client → Client scopes ' +
               'and assign the realm scope "hasura" as Default (it adds the Hasura claims Phonemos requires). ' +
@@ -389,15 +520,19 @@ exports.httpHandler = {
           return ctx.response.json({
             success: false,
             message: message,
+            attempts: result.attempts || [],
+            within: settings.withinObjectId,
           });
         }
 
-        const data = parseJsonSafe(serviceResponse) || {};
         return ctx.response.json({
           success: true,
-          query: query,
-          mode: data.mode || mode,
-          items: mapSearchHits(settings, data),
+          query: result.query,
+          queryLabel: result.queryLabel,
+          mode: result.mode,
+          items: result.items,
+          within: result.within,
+          attempts: result.attempts,
         });
       },
     },

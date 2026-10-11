@@ -27,10 +27,24 @@ type SuggestionItem = {
   href: string;
 };
 
+type SearchAttempt = {
+  label?: string;
+  mode?: string;
+  objectTypes?: string;
+  status?: number;
+  hits?: number;
+  error?: string;
+  responseKeys?: string;
+};
+
 type SuggestionsResponse = {
   success: boolean;
   message?: string;
   mode?: string;
+  query?: string;
+  queryLabel?: string;
+  within?: string;
+  attempts?: SearchAttempt[];
   items?: SuggestionItem[];
 };
 
@@ -43,10 +57,12 @@ const AppComponent: React.FunctionComponent = () => {
   const [items, setItems] = useState<SuggestionItem[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [mode, setMode] = useState<string | null>(null);
+  const [debug, setDebug] = useState<string | null>(null);
 
   const loadSuggestions = useCallback(async () => {
     setStatus('loading');
     setError(null);
+    setDebug(null);
     try {
       const tokens = await ensurePhonemosTokens(host);
       if (!tokens) {
@@ -72,6 +88,22 @@ const AppComponent: React.FunctionComponent = () => {
       const nextItems = response.items || [];
       setItems(nextItems);
       setMode(response.mode || null);
+      if (!nextItems.length) {
+        const attemptLines = (response.attempts || []).map((attempt) =>
+          `${attempt.label || '?'}/${attempt.mode || '?'} types=${attempt.objectTypes || '?'} ` +
+          `status=${attempt.status ?? '?'} hits=${attempt.hits ?? 0}` +
+          (attempt.error ? ` error=${attempt.error}` : '') +
+          (attempt.responseKeys ? ` keys=${attempt.responseKeys}` : ''),
+        );
+        setDebug(
+          [
+            `queryLabel=${response.queryLabel || ''}`,
+            `query=${response.query || ''}`,
+            `within=${response.within || ''}`,
+            ...attemptLines,
+          ].join('\n'),
+        );
+      }
       setStatus(nextItems.length ? 'ready' : 'empty');
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Unable to load suggestions.');
@@ -124,7 +156,15 @@ const AppComponent: React.FunctionComponent = () => {
       )}
 
       {status === 'empty' && (
-        <p className="muted">No matching articles</p>
+        <div className="stack">
+          <p className="muted">No matching articles</p>
+          {debug && (
+            <p className="muted" style={{whiteSpace: 'pre-wrap', fontSize: '11px'}}>
+              {debug}
+            </p>
+          )}
+          <Button onClick={() => void loadSuggestions()}>Retry</Button>
+        </div>
       )}
 
       {status === 'error' && (

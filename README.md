@@ -79,9 +79,14 @@ The issue-scoped handler builds:
 
 Then calls:
 
-`POST {phonemosBaseUrl}/_api/rest/v1/objects-search` with `mode: "hybrid"` and `objectTypes: ["wikipage"]`.
+`POST {phonemosBaseUrl}/_api/rest/v1/objects-search`, trying several strategies until hits appear:
 
-If hybrid fails with a 4xx (for example embeddings unavailable), the handler retries with `mode: "fulltext"`.
+1. Ticket summary (hybrid, then fulltext)
+2. Title-only search (`#` + summary)
+3. Summary + description + latest reporter comment
+4. Same queries without the `wikipage` type filter
+
+If every strategy returns zero hits, the widget shows the query/`within` UUID and attempt log under **No matching articles**.
 
 ## Auth flow
 
