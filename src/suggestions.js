@@ -20,7 +20,8 @@ function requireSettings(ctx) {
     oauthAuthorizationUrl: s.oauthAuthorizationUrl,
     oauthTokenUrl: s.oauthTokenUrl,
     oauthRedirectUri: s.oauthRedirectUri,
-    withinObjectId: s.withinObjectId,
+    withinObjectId: normalizeWithinObjectId(s.withinObjectId),
+    withinObjectIdRaw: s.withinObjectId == null ? '' : String(s.withinObjectId).trim(),
     searchLimit: s.searchLimit,
   };
 }
@@ -64,6 +65,117 @@ function uuidToSlug(uuid) {
     bytes.push(parseInt(hex.substring(i, i + 2), 16));
   }
   return bytesToBase64(bytes).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '').substring(0, 22);
+}
+
+function base64UrlToBytes(value) {
+  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
+  let input = String(value || '')
+    .replace(/-/g, '+')
+    .replace(/_/g, '/');
+  while (input.length % 4) {
+    input += '=';
+  }
+  const bytes = [];
+  for (let i = 0; i < input.length; i += 4) {
+    const a = chars.indexOf(input.charAt(i));
+    const b = chars.indexOf(input.charAt(i + 1));
+    const c = input.charAt(i + 2) === '=' ? -1 : chars.indexOf(input.charAt(i + 2));
+    const d = input.charAt(i + 3) === '=' ? -1 : chars.indexOf(input.charAt(i + 3));
+    if (a < 0 || b < 0) {
+      return null;
+    }
+    bytes.push((a << 2) | (b >> 4));
+    if (c >= 0) {
+      bytes.push(((b & 15) << 4) | (c >> 2));
+    }
+    if (d >= 0) {
+      bytes.push(((c & 3) << 6) | d);
+    }
+  }
+  return bytes;
+}
+
+function slugToUuid(slug) {
+  const raw = String(slug || '');
+  if (!/^[A-Za-z0-9_-]{22}$/.test(raw)) {
+    return null;
+  }
+  const bytes = base64UrlToBytes(raw);
+  if (!bytes || bytes.length < 16) {
+    return null;
+  }
+  let hex = '';
+  for (let i = 0; i < 16; i++) {
+    const h = bytes[i].toString(16);
+    hex += h.length === 1 ? '0' + h : h;
+  }
+  return (
+    hex.substring(0, 8) +
+    '-' +
+    hex.substring(8, 12) +
+    '-' +
+    hex.substring(12, 16) +
+    '-' +
+    hex.substring(16, 20) +
+    '-' +
+    hex.substring(20, 32)
+  );
+}
+
+function normalizeUuid(value) {
+  const hex = String(value || '').replace(/-/g, '').toLowerCase();
+  if (!/^[0-9a-f]{32}$/.test(hex)) {
+    return null;
+  }
+  return (
+    hex.substring(0, 8) +
+    '-' +
+    hex.substring(8, 12) +
+    '-' +
+    hex.substring(12, 16) +
+    '-' +
+    hex.substring(16, 20) +
+    '-' +
+    hex.substring(20, 32)
+  );
+}
+
+/**
+ * Accept project setting as UUID, Phonemos slug, or topic/object URL.
+ * Examples:
+ *   01234567-89ab-cdef-0123-456789abcdef
+ *   hgZU0Gy-S5ObkiUPdABgrQ
+ *   https://showcase.phonemos.cloud/t/hgZU0Gy-S5ObkiUPdABgrQ/start
+ */
+function normalizeWithinObjectId(value) {
+  let raw = String(value == null ? '' : value).trim();
+  if (
+    (raw.charAt(0) === '"' && raw.charAt(raw.length - 1) === '"') ||
+    (raw.charAt(0) === "'" && raw.charAt(raw.length - 1) === "'")
+  ) {
+    raw = raw.substring(1, raw.length - 1).trim();
+  }
+  if (!raw) {
+    return null;
+  }
+
+  const asUuid = normalizeUuid(raw);
+  if (asUuid) {
+    return asUuid;
+  }
+
+  const asSlug = slugToUuid(raw);
+  if (asSlug) {
+    return asSlug;
+  }
+
+  // URL or path: /t/{slug}/… or /o/{slug|uuid}/…
+  const match = raw.match(/\/(?:t|o)\/([A-Za-z0-9_-]{22}|[0-9a-fA-F-]{36})(?:\/|$)/);
+  if (match) {
+    return normalizeUuid(match[1]) || slugToUuid(match[1]);
+  }
+
+  return null;
 }
 
 function objectHref(baseUrl, objectId) {
@@ -122,6 +234,58 @@ function buildSearchQuery(issue) {
   return q;
 }
 
+function base64UrlToString(value) {
+  const normalized = String(value || '')
+    .replace(/-/g, '+')
+    .replace(/_/g, '/');
+  const pad = normalized.length % 4 === 0 ? '' : new Array(5 - (normalized.length % 4)).join('=');
+  const input = normalized + pad;
+  try {
+    if (typeof Buffer !== 'undefined') {
+      return Buffer.from(input, 'base64').toString('utf8');
+    }
+  } catch (e) {
+    // continue
+  }
+  try {
+    const Base64 = Java.type('java.util.Base64');
+    return new java.lang.String(Base64.getDecoder().decode(input), 'UTF-8');
+  } catch (e2) {
+    return null;
+  }
+}
+
+function describeAccessTokenClaims(accessToken) {
+  const raw = String(accessToken || '');
+  const parts = raw.split('.');
+  if (parts.length < 2) {
+    return 'token is opaque/not a JWT (len=' + raw.length + ')';
+  }
+  const json = base64UrlToString(parts[1]);
+  if (!json) {
+    return 'unable to decode JWT payload (len=' + raw.length + ')';
+  }
+  try {
+    const payload = JSON.parse(json);
+    const hasura = payload['https://hasura.io/jwt/claims'] || payload.hasura || null;
+    const keys = Object.keys(payload).slice(0, 12).join(',');
+    return (
+      'jwt aud=' +
+      JSON.stringify(payload.aud || null) +
+      ' azp=' +
+      JSON.stringify(payload.azp || null) +
+      ' scope=' +
+      JSON.stringify(payload.scope || null) +
+      ' hasHasuraClaims=' +
+      String(!!hasura) +
+      ' claimKeys=' +
+      keys
+    );
+  } catch (e) {
+    return 'JWT payload is not JSON';
+  }
+}
+
 function searchPhonemos(settings, accessToken, query, mode) {
   const limit = settings.searchLimit != null ? Number(settings.searchLimit) : DEFAULT_SEARCH_LIMIT;
   const safeLimit = isNaN(limit) || limit < 1 ? DEFAULT_SEARCH_LIMIT : Math.min(20, Math.floor(limit));
@@ -162,11 +326,22 @@ exports.httpHandler = {
       permissions: ['READ_ISSUE'],
       handle: function handle(ctx) {
         const settings = requireSettings(ctx);
-        const missing = missingSettings(settings, ['phonemosBaseUrl', 'withinObjectId']);
-        if (missing.length) {
+        if (!settings.phonemosBaseUrl) {
           return ctx.response.json({
             success: false,
-            message: 'Missing app settings: ' + missing.join(', '),
+            message: 'Missing app settings: phonemosBaseUrl',
+          });
+        }
+        if (!settings.withinObjectId) {
+          return ctx.response.json({
+            success: false,
+            message:
+              'Invalid Phonemos search root. Set the project setting to an object UUID, ' +
+              'a 22-character Phonemos slug, or a topic URL like ' +
+              'https://showcase.phonemos.cloud/t/{slug}/start.' +
+              (settings.withinObjectIdRaw
+                ? '\nCurrent value: ' + settings.withinObjectIdRaw
+                : ''),
           });
         }
 
@@ -197,10 +372,23 @@ exports.httpHandler = {
 
         if (!serviceResponse.isSuccess) {
           const errBody = serviceResponse.body ? String(serviceResponse.body).substring(0, 300) : '';
+          let message =
+            'Phonemos search failed with status ' +
+            serviceResponse.code +
+            (errBody ? ': ' + errBody : '.');
+          if (serviceResponse.code === 401 || /unauthorized|invalid.?bearer|invalid.?token/i.test(errBody)) {
+            message +=
+              '\n\nPhonemos rejected the access token. In Keycloak, open this app’s client → Client scopes ' +
+              'and assign the realm scope "hasura" as Default (it adds the Hasura claims Phonemos requires). ' +
+              'Also request scope "hasura" (app setting OAuth scopes). Then disconnect/reconnect in the widget.';
+            const claimHint = describeAccessTokenClaims(body.accessToken);
+            if (claimHint) {
+              message += '\n\nToken debug: ' + claimHint;
+            }
+          }
           return ctx.response.json({
             success: false,
-            message: 'Phonemos search failed with status ' + serviceResponse.code +
-              (errBody ? ': ' + errBody : '.'),
+            message: message,
           });
         }
 

@@ -46,9 +46,17 @@
       "default": "",
       "x-scope": "GLOBAL"
     },
+    "oauthScope": {
+      "title": "OAuth scopes",
+      "description": "Space-separated Keycloak scopes. Must include hasura so the access token carries Phonemos/Hasura claims. Assign the hasura client scope as Default on the Keycloak client.",
+      "type": "string",
+      "default": "openid profile email offline_access hasura",
+      "minLength": 1,
+      "x-scope": "GLOBAL"
+    },
     "withinObjectId": {
-      "title": "Phonemos search root object ID",
-      "description": "UUID of the Phonemos site or topic to search within for this YouTrack project",
+      "title": "Phonemos search root",
+      "description": "Object UUID, 22-char slug, or topic URL to search within (e.g. https://showcase.phonemos.cloud/t/hgZU0Gy-S5ObkiUPdABgrQ/start). The app converts URLs/slugs to a UUID for the API.",
       "type": "string",
       "minLength": 1,
       "x-scope": "PROJECT"

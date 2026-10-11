@@ -59,9 +59,9 @@ const AppComponent: React.FunctionComponent = () => {
         body: {accessToken: tokens.accessToken},
       });
       if (!response.success) {
-        // Keep the session visible in the error UI — silent needs-auth looked like an
-        // endless Connect loop when Phonemos search rejected the token.
-        if (/401|403|unauthorized|invalid.?token/i.test(response.message || '')) {
+        // Keep the error visible (do not silently bounce to Connect). Clear the
+        // session so the next Connect picks up a new token after Keycloak fixes.
+        if (/401|403|unauthorized|invalid.?token|invalid.?bearer/i.test(response.message || '')) {
           await clearPhonemosSession(host);
           setError(response.message || 'Phonemos rejected the access token.');
           setStatus('error');

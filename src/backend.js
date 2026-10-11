@@ -118,11 +118,11 @@ function readLogin(ctx, state) {
   if (!state || !userId) {
     return null;
   }
-  const now = Date.now();
-  const map = prunePendingMap(readLoginMap(ctx), now);
-  writeLoginMap(ctx, map);
-  const entry = map[String(state)];
+  const entry = readLoginMap(ctx)[String(state)];
   if (!entry || String(entry.userId) !== userId) {
+    return null;
+  }
+  if (!entry.ts || Date.now() - Number(entry.ts) > OAUTH_PENDING_TTL_MS) {
     return null;
   }
   return entry;
@@ -224,6 +224,9 @@ function requireSettings(ctx) {
     oauthAuthorizationUrl: trimSetting(s.oauthAuthorizationUrl),
     oauthTokenUrl: trimSetting(s.oauthTokenUrl),
     oauthRedirectUri: trimSetting(s.oauthRedirectUri),
+    // Phonemos validates Hasura claims in the access token; the Keycloak client
+    // must assign the "hasura" client scope (Default) or tokens are rejected.
+    oauthScope: trimSetting(s.oauthScope) || 'openid profile email offline_access hasura',
     withinObjectId: trimSetting(s.withinObjectId),
     searchLimit: s.searchLimit,
   };
@@ -394,7 +397,9 @@ exports.httpHandler = {
     },
     {
       scope: 'global',
-      method: 'GET',
+      // POST required: storing the PKCE verifier writes app global storage.
+      // YouTrack forbids database modifications from GET extension endpoints.
+      method: 'POST',
       path: 'oauth/authorize-url',
       handle: function handle(ctx) {
         const settings = requireSettings(ctx);
@@ -409,17 +414,21 @@ exports.httpHandler = {
           });
         }
 
-        const state = ctx.request.getParameter('state');
-        const codeChallenge = ctx.request.getParameter('code_challenge');
-        const codeVerifier = ctx.request.getParameter('code_verifier');
+        const body = ctx.request.json() || {};
+        const state = body.state || ctx.request.getParameter('state');
+        const codeChallenge = body.code_challenge || ctx.request.getParameter('code_challenge');
+        const codeVerifier = body.code_verifier || ctx.request.getParameter('code_verifier');
         if (!state || !codeChallenge || !codeVerifier) {
           return ctx.response.json({
             success: false,
-            message: 'state, code_challenge, and code_verifier query parameters are required.',
+            message: 'state, code_challenge, and code_verifier are required.',
           });
         }
 
-        const redirectUri = ctx.request.getParameter('redirect_uri') || settings.oauthRedirectUri;
+        const redirectUri =
+          body.redirect_uri ||
+          ctx.request.getParameter('redirect_uri') ||
+          settings.oauthRedirectUri;
         if (!redirectUri) {
           return ctx.response.json({
             success: false,
@@ -445,7 +454,7 @@ exports.httpHandler = {
           'response_type=code',
           'client_id=' + encodeURIComponent(settings.oauthClientId),
           'redirect_uri=' + encodeURIComponent(redirectUri),
-          'scope=' + encodeURIComponent('openid'),
+          'scope=' + encodeURIComponent(settings.oauthScope),
           'state=' + encodeURIComponent(state),
           'code_challenge=' + encodeURIComponent(codeChallenge),
           'code_challenge_method=S256',
@@ -566,19 +575,18 @@ exports.httpHandler = {
           return ctx.response.json({success: false, message: 'Not authenticated.'});
         }
 
-        const now = Date.now();
-        const map = prunePendingMap(readPendingMap(ctx), now);
-        const entry = map[String(state)];
+        // Read-only: GET handlers must not write global storage.
+        const entry = readPendingMap(ctx)[String(state)];
         if (!entry) {
-          writePendingMap(ctx, map);
           return ctx.response.json({success: true, pending: false});
         }
         if (String(entry.userId) !== userId) {
           return ctx.response.json({success: true, pending: false});
         }
+        if (!entry.ts || Date.now() - Number(entry.ts) > OAUTH_PENDING_TTL_MS) {
+          return ctx.response.json({success: true, pending: false});
+        }
 
-        delete map[String(state)];
-        writePendingMap(ctx, map);
         return ctx.response.json({
           success: true,
           pending: true,

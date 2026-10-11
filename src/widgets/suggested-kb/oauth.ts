@@ -341,8 +341,8 @@ export async function connectPhonemos(host: HostAPI): Promise<PhonemosTokens> {
       host,
       'backend/oauth/authorize-url',
       {
-        method: 'GET',
-        query: {
+        method: 'POST',
+        body: {
           state,
           code_challenge: codeChallenge,
           code_verifier: codeVerifier,

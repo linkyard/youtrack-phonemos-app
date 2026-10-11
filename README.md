@@ -55,8 +55,11 @@ npm run pack
 
    `https://{youtrack}/api/appResources/*`
 
-3. Scopes: at least `openid`.
-4. Put client id/secret and the auth/token URLs into the YouTrack app settings. **OAuth redirect URI** is an optional fallback; the widget prefers the derived `appResources` URL.
+3. **Client scopes** — on the Keycloak client, assign at least:
+   - `hasura` as **Default** (required — adds Hasura claims Phonemos needs in the access token)
+   - `offline_access` as Default (refresh tokens)
+   - usual OIDC defaults (`openid` / `profile` / `email`)
+4. Put client id/secret and the auth/token URLs into the YouTrack app settings. **OAuth scopes** should include `hasura` (default: `openid profile email offline_access hasura`). **OAuth redirect URI** is an optional fallback; the widget prefers the derived `appResources` URL.
 
    Paste the **full** Keycloak client secret. If YouTrack ever shows only `*****` and token exchange fails with `unauthorized_client`, the mask was saved instead of the secret — clear the field, paste again, save once, and avoid re-saving settings without re-pasting the secret.
 
