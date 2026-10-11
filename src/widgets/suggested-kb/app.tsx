@@ -54,6 +54,7 @@ const host = await YTApp.register();
 
 const AppComponent: React.FunctionComponent = () => {
   const [status, setStatus] = useState<Status>('loading');
+  const [connected, setConnected] = useState(false);
   const [items, setItems] = useState<SuggestionItem[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [mode, setMode] = useState<string | null>(null);
@@ -67,9 +68,11 @@ const AppComponent: React.FunctionComponent = () => {
       // Ensure a server-side session exists; tokens never enter the widget.
       const session = await ensurePhonemosTokens(host);
       if (!session) {
+        setConnected(false);
         setStatus('needs-auth');
         return;
       }
+      setConnected(true);
       const response = await host.fetchApp<SuggestionsResponse>('suggestions/list', {
         method: 'POST',
         scope: true,
@@ -83,6 +86,7 @@ const AppComponent: React.FunctionComponent = () => {
           )
         ) {
           await clearPhonemosSession(host);
+          setConnected(false);
           if (response.needsAuth && /connect to phonemos first/i.test(response.message || '')) {
             setStatus('needs-auth');
             return;
@@ -134,11 +138,32 @@ const AppComponent: React.FunctionComponent = () => {
     }
   }, [loadSuggestions]);
 
+  const onDisconnect = useCallback(async () => {
+    setError(null);
+    setDebug(null);
+    setItems([]);
+    setMode(null);
+    setConnected(false);
+    try {
+      await clearPhonemosSession(host);
+    } catch {
+      // Still treat as signed out locally.
+    }
+    setStatus('needs-auth');
+  }, []);
+
   return (
     <div className="widget">
       <div className="header">
         <h2 className="title">Suggested knowledge base articles</h2>
-        {mode && status === 'ready' && <span className="mode">{mode}</span>}
+        <div className="header-actions">
+          {mode && status === 'ready' && <span className="mode">{mode}</span>}
+          {connected && (
+            <Button text onClick={() => void onDisconnect()}>
+              Disconnect
+            </Button>
+          )}
+        </div>
       </div>
 
       {status === 'loading' && (

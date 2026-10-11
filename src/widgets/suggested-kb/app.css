@@ -14,6 +14,13 @@
   gap: var(--ring-unit);
 }
 
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--ring-unit);
+  flex-shrink: 0;
+}
+
 .title {
   margin: 0;
   font: var(--ring-heading-font);
