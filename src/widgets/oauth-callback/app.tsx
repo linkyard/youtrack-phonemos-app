@@ -1,5 +1,7 @@
 import React, {memo, useCallback, useEffect, useState} from 'react';
 import Button from '@jetbrains/ring-ui-built/components/button/button';
+import Input from '@jetbrains/ring-ui-built/components/input/input';
+import Link from '@jetbrains/ring-ui-built/components/link/link';
 import LoaderInline from '@jetbrains/ring-ui-built/components/loader-inline/loader-inline';
 
 import {publishOAuthResult, readOAuthParamsFromHost} from '../shared/oauth-result';
@@ -9,6 +11,8 @@ import {
   ensurePhonemosTokens,
   formatUnknownError,
 } from '../suggested-kb/oauth';
+
+import phonemosLogo from './phonemos-logo-full.svg?url';
 
 function closePopup(): void {
   window.setTimeout(() => {
@@ -55,12 +59,31 @@ function hasOAuthResponse(params: URLSearchParams): boolean {
 
 type Mode = 'checking' | 'home' | 'completing' | 'done' | 'error';
 
+type SearchHit = {
+  objectId: string;
+  name: string;
+  extract: string;
+  href: string;
+};
+
+type SearchResponse = {
+  success: boolean;
+  message?: string;
+  needsAuth?: boolean;
+  items?: SearchHit[];
+};
+
 const AppComponent: React.FunctionComponent = () => {
   const [mode, setMode] = useState<Mode>('checking');
   const [message, setMessage] = useState('Loading…');
   const [connected, setConnected] = useState(false);
   const [busy, setBusy] = useState(false);
   const [host, setHost] = useState<Awaited<ReturnType<typeof YTApp.register>> | null>(null);
+  const [query, setQuery] = useState('');
+  const [searching, setSearching] = useState(false);
+  const [searched, setSearched] = useState(false);
+  const [hits, setHits] = useState<SearchHit[]>([]);
+  const [searchError, setSearchError] = useState<string | null>(null);
 
   const refreshConnection = useCallback(async (api: Awaited<ReturnType<typeof YTApp.register>>) => {
     const session = await ensurePhonemosTokens(api);
@@ -206,6 +229,9 @@ const AppComponent: React.FunctionComponent = () => {
     try {
       await clearPhonemosSession(host);
       setConnected(false);
+      setHits([]);
+      setSearched(false);
+      setSearchError(null);
       setMode('home');
       setMessage('');
     } catch (e) {
@@ -216,13 +242,70 @@ const AppComponent: React.FunctionComponent = () => {
     }
   };
 
+  const runSearch = async () => {
+    if (!host || searching || busy) {
+      return;
+    }
+    const q = query.trim();
+    if (!q) {
+      return;
+    }
+    setSearching(true);
+    setSearchError(null);
+    setSearched(false);
+    setHits([]);
+    try {
+      // MAIN_MENU_ITEM defaults fetchApp to user scope — force global for kb-search.
+      const response = await host.fetchApp<SearchResponse>('kb-search/query', {
+        method: 'POST',
+        scope: false,
+        body: {q},
+      });
+      if (!response.success) {
+        if (response.needsAuth) {
+          setConnected(false);
+          setHits([]);
+        }
+        setSearchError(response.message || 'Search failed.');
+        setSearched(true);
+        return;
+      }
+      setHits(response.items || []);
+      setSearched(true);
+    } catch (e) {
+      setSearchError(formatUnknownError(e));
+      setSearched(true);
+    } finally {
+      setSearching(false);
+    }
+  };
+
+  const onSearch = async (event: React.FormEvent) => {
+    event.preventDefault();
+    await runSearch();
+  };
+
+  const brandHero = (
+    <header className="hero">
+      <img className="logo" src={phonemosLogo} alt="Phonemos" width={333} height={72} />
+      <p className="lead">
+        Search your knowledge base from YouTrack. On tickets, Phonemos also suggests articles from
+        the issue text.
+      </p>
+    </header>
+  );
+
   if (mode === 'checking' || mode === 'completing') {
     return (
       <div className="page">
-        <h1>Phonemos</h1>
-        <div className="row">
-          <LoaderInline />
-          <p>{message}</p>
+        <div className="shell">
+          {brandHero}
+          <div className="panel">
+            <div className="row">
+              <LoaderInline />
+              <p>{message}</p>
+            </div>
+          </div>
         </div>
       </div>
     );
@@ -231,45 +314,111 @@ const AppComponent: React.FunctionComponent = () => {
   if (mode === 'done') {
     return (
       <div className="page">
-        <h1>Phonemos</h1>
-        <p>{message}</p>
+        <div className="shell">
+          {brandHero}
+          <div className="panel">
+            <p className="empty-state">{message}</p>
+          </div>
+        </div>
       </div>
     );
   }
 
   return (
     <div className="page">
-      <h1>Phonemos</h1>
-      <p className="lead">
-        Knowledge base suggestions for YouTrack Helpdesk. Open a ticket to see matching Phonemos
-        articles under the description.
-      </p>
+      <div className="shell">
+        {brandHero}
 
-      <div className="status">
-        <p className={connected ? 'status-ok' : 'status-muted'}>
-          {connected ? 'Connected to Phonemos' : 'Not connected'}
-        </p>
-        {busy ? <LoaderInline /> : null}
-      </div>
+        <section className="panel">
+          <div className="panel-header">
+            <h2 className="panel-title">Account</h2>
+            <div className="status">
+              <span className={connected ? 'status-dot on' : 'status-dot'} aria-hidden />
+              <p className="status-label">
+                {connected ? 'Connected' : 'Not connected'}
+              </p>
+              {busy ? <LoaderInline /> : null}
+            </div>
+          </div>
+          <div className="actions">
+            {connected ? (
+              <Button onClick={() => void onDisconnect()} disabled={busy || !host}>
+                Disconnect
+              </Button>
+            ) : (
+              <Button primary onClick={() => void onConnect()} disabled={busy || !host}>
+                Connect to Phonemos
+              </Button>
+            )}
+          </div>
+          {mode === 'error' && message ? <p className="error">{message}</p> : null}
+          {!connected && (
+            <p className="hint">
+              Sign-in from a ticket also works. Keycloak must allow the appResources popup callback
+              URL shown under Connect on the ticket widget — not this menu page URL.
+            </p>
+          )}
+        </section>
 
-      <div className="actions">
-        {connected ? (
-          <Button onClick={() => void onDisconnect()} disabled={busy || !host}>
-            Disconnect
-          </Button>
-        ) : (
-          <Button primary onClick={() => void onConnect()} disabled={busy || !host}>
-            Connect to Phonemos
-          </Button>
+        {connected && (
+          <section className="panel">
+            <div className="panel-header">
+              <h2 className="panel-title">Search</h2>
+            </div>
+            <form className="search" onSubmit={(event) => void onSearch(event)}>
+              <Input
+                value={query}
+                placeholder="Search articles, topics, and pages"
+                onChange={(event) => setQuery(event.target.value)}
+                disabled={searching || busy}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter') {
+                    event.preventDefault();
+                    void runSearch();
+                  }
+                }}
+              />
+              <Button
+                primary
+                type="submit"
+                disabled={searching || busy || !query.trim() || !host}
+                onClick={(event) => {
+                  event.preventDefault();
+                  void runSearch();
+                }}
+              >
+                Search
+              </Button>
+            </form>
+
+            {searching && (
+              <div className="search-status">
+                <LoaderInline />
+                <p>Searching…</p>
+              </div>
+            )}
+
+            {searchError ? <p className="error">{searchError}</p> : null}
+
+            {searched && !searching && !searchError && hits.length === 0 ? (
+              <p className="hint">No matching articles</p>
+            ) : null}
+
+            {hits.length > 0 && (
+              <ul className="results">
+                {hits.map((item) => (
+                  <li key={item.objectId} className="result">
+                    <Link href={item.href} target="_blank" className="result-title">
+                      {item.name}
+                    </Link>
+                    {item.extract ? <p className="extract">{item.extract}</p> : null}
+                  </li>
+                ))}
+              </ul>
+            )}
+          </section>
         )}
       </div>
-
-      {mode === 'error' && message ? <p className="error">{message}</p> : null}
-
-      <p className="hint">
-        Sign-in from a ticket also works. Keycloak must allow the appResources popup callback URL
-        shown under Connect on the ticket widget — not this menu page URL.
-      </p>
     </div>
   );
 };

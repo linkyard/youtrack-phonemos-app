@@ -259,6 +259,41 @@ function buildSearchQueries(issue) {
   return queries;
 }
 
+/**
+ * Resolve the Phonemos site object id for the configured base URL (GET /v1/sites/self).
+ * Use as `within` when searching the whole site without a topic/zone root.
+ */
+function resolveSiteObjectId(settings, accessToken) {
+  const unsafe = urlSafety.validateOutboundSettings(settings, ['phonemosBaseUrl']);
+  if (unsafe) {
+    return {ok: false, message: unsafe};
+  }
+  const connection = new http.Connection(settings.phonemosBaseUrl);
+  connection.addHeader('Authorization', 'Bearer ' + accessToken);
+  connection.addHeader('Accept', 'application/json');
+  const response = connection.getSync('/_api/rest/v1/sites/self', null);
+  if (!response || !response.isSuccess) {
+    const code = response && response.code != null ? response.code : 'unknown';
+    const body = response && response.body != null ? String(response.body).substring(0, 200) : '';
+    return {
+      ok: false,
+      message:
+        'Unable to resolve Phonemos site (HTTP ' + code + ')' + (body ? ': ' + body : '.'),
+    };
+  }
+  let data = null;
+  try {
+    data = response.json();
+  } catch (e) {
+    data = null;
+  }
+  const objectId = data && (data.objectId || data.id);
+  if (!objectId) {
+    return {ok: false, message: 'Phonemos /sites/self did not return an objectId.'};
+  }
+  return {ok: true, objectId: String(objectId)};
+}
+
 function searchPhonemos(settings, accessToken, query, mode, objectTypes) {
   const unsafe = urlSafety.validateOutboundSettings(settings, ['phonemosBaseUrl']);
   if (unsafe) {
@@ -419,6 +454,27 @@ function runSearchStrategies(settings, accessToken, queries) {
     within: settings.withinObjectId,
   };
 }
+
+function searchText(settings, accessToken, query) {
+  const clipped = String(query || '').replace(/\s+/g, ' ').trim();
+  if (!clipped) {
+    return {
+      success: true,
+      query: '',
+      queryLabel: 'query',
+      mode: 'hybrid',
+      items: [],
+      attempts: [],
+      within: settings.withinObjectId,
+    };
+  }
+  const q = clipped.length > MAX_QUERY_CHARS ? clipped.substring(0, MAX_QUERY_CHARS) : clipped;
+  return runSearchStrategies(settings, accessToken, [{label: 'query', q: q}]);
+}
+
+exports.normalizeWithinObjectId = normalizeWithinObjectId;
+exports.resolveSiteObjectId = resolveSiteObjectId;
+exports.searchText = searchText;
 
 exports.httpHandler = {
   endpoints: [
