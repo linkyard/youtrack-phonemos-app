@@ -7,6 +7,32 @@
   </head>
   <body>
     <div id="root"></div>
+    <!-- Runs before the React app; useful when this HTML is opened top-level as redirect_uri. -->
+    <script>
+      (function () {
+        try {
+          var params = new URLSearchParams(window.location.search || '');
+          var hash = window.location.hash || '';
+          if (!(params.get('code') || params.get('error')) && hash.indexOf('=') >= 0) {
+            params = new URLSearchParams(hash.charAt(0) === '#' ? hash.slice(1) : hash);
+          }
+          var code = params.get('code');
+          var state = params.get('state');
+          var error = params.get('error_description') || params.get('error');
+          if (!(code || error)) {
+            return;
+          }
+          var payload = {type: 'phonemos:oauth', code: code, state: state, error: error, ts: Date.now()};
+          try { if (window.opener) { window.opener.postMessage(payload, '*'); } } catch (e) {}
+          try { localStorage.setItem('phonemos:oauth-result', JSON.stringify(payload)); } catch (e) {}
+          try {
+            var channel = new BroadcastChannel('phonemos-oauth');
+            channel.postMessage(payload);
+            channel.close();
+          } catch (e) {}
+        } catch (e) {}
+      })();
+    </script>
     <script type="module" src="index.tsx"></script>
   </body>
 </html>

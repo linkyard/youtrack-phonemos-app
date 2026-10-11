@@ -14,7 +14,11 @@ export type OAuthResultPayload = {
 type HostWithStorage = {
   fetchApp?: <T = unknown>(
     relativeURL: string,
-    requestParams?: {method?: string; query?: Record<string, string>},
+    requestParams?: {
+      method?: string;
+      query?: Record<string, string>;
+      body?: unknown;
+    },
   ) => Promise<T>;
   storage?: {
     getItem: (key: string) => Promise<string | null>;
@@ -90,6 +94,22 @@ export async function publishOAuthResult(
       // ignore
     }
   }
+
+  // Most reliable channel: authenticated YouTrack handler, polled by the ticket widget.
+  if (host.fetchApp && full.state) {
+    try {
+      await host.fetchApp('backend/oauth/complete', {
+        method: 'POST',
+        body: {
+          code: full.code ?? null,
+          state: full.state,
+          error: full.error ?? null,
+        },
+      });
+    } catch {
+      // ignore
+    }
+  }
 }
 
 export async function clearPublishedOAuthResult(host: HostWithStorage): Promise<void> {
@@ -107,32 +127,43 @@ export async function clearPublishedOAuthResult(host: HostWithStorage): Promise<
   }
 }
 
+function paramsFromQueryOrHash(search: string, hash: string): URLSearchParams {
+  const fromSearch = new URLSearchParams(search || '');
+  if (fromSearch.get('code') || fromSearch.get('error') || fromSearch.get('state')) {
+    return fromSearch;
+  }
+  if (hash) {
+    const raw = hash.startsWith('#') ? hash.slice(1) : hash;
+    // Keycloak fragment mode: #code=...&state=... (not a path hash)
+    if (raw.includes('=')) {
+      return new URLSearchParams(raw);
+    }
+  }
+  return fromSearch;
+}
+
 export async function readOAuthParamsFromHost(host: HostWithStorage): Promise<URLSearchParams> {
   if (host.navigation?.getAppLocation) {
     const appLocation = await host.navigation.getAppLocation();
-    const fromSearch = new URLSearchParams(appLocation.search || '');
-    if (fromSearch.get('code') || fromSearch.get('error') || fromSearch.get('state')) {
-      return fromSearch;
-    }
-    if (appLocation.hash) {
-      const hash = appLocation.hash.startsWith('#') ? appLocation.hash.slice(1) : appLocation.hash;
-      const fromHash = new URLSearchParams(hash.includes('=') ? hash : hash.replace(/^\/?/, ''));
-      if (fromHash.get('code') || fromHash.get('error') || fromHash.get('state')) {
-        return fromHash;
-      }
+    const fromApp = paramsFromQueryOrHash(appLocation.search || '', appLocation.hash || '');
+    if (fromApp.get('code') || fromApp.get('error') || fromApp.get('state')) {
+      return fromApp;
     }
   }
 
   try {
-    const topSearch = window.top?.location.search;
-    if (topSearch) {
-      return new URLSearchParams(topSearch);
+    const top = window.top;
+    if (top) {
+      const fromTop = paramsFromQueryOrHash(top.location.search || '', top.location.hash || '');
+      if (fromTop.get('code') || fromTop.get('error') || fromTop.get('state')) {
+        return fromTop;
+      }
     }
   } catch {
-    // Cross-origin
+    // Cross-origin access to the YouTrack host frame is blocked.
   }
 
-  return new URLSearchParams(window.location.search);
+  return paramsFromQueryOrHash(window.location.search || '', window.location.hash || '');
 }
 
 export async function waitForOAuthParams(
@@ -214,8 +245,31 @@ export function waitForOAuthResult(
       }
     };
 
+    const readPopupName = (): OAuthResultPayload | null => {
+      if (!popup) {
+        return null;
+      }
+      try {
+        const raw = String(popup.name || '');
+        const prefix = 'phonemos-oauth:';
+        if (!raw.startsWith(prefix)) {
+          return null;
+        }
+        return parseOAuthResult(raw.slice(prefix.length));
+      } catch {
+        // Cross-origin until the callback navigates to about:blank
+        return null;
+      }
+    };
+
     const poll = window.setInterval(() => {
       void (async () => {
+        const fromName = readPopupName();
+        if (fromName && (!fromName.state || fromName.state === expectedState)) {
+          accept(fromName);
+          return;
+        }
+
         try {
           const local = parseOAuthResult(localStorage.getItem(OAUTH_LOCAL_STORAGE_KEY));
           if (local && (!local.state || local.state === expectedState)) {

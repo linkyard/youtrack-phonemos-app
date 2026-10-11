@@ -38,39 +38,21 @@ function prunePendingMap(map, now) {
   return map;
 }
 
-function jsString(value) {
-  return JSON.stringify(value == null ? null : String(value));
-}
-
-function oauthCallbackHtml(payload) {
-  const message = payload.error
-    ? 'Sign-in failed: ' + String(payload.error)
-    : 'Signed in. You can close this window.';
-  return (
-    '<!DOCTYPE html><html><head><meta charset="utf-8"><title>Phonemos</title>' +
-    '<style>body{font-family:system-ui,sans-serif;padding:24px;color:#1b1b1b;background:#fff}' +
-    '@media (prefers-color-scheme:dark){body{color:#f2f2f2;background:#1b1b1b}}</style></head><body>' +
-    '<h1>Phonemos</h1><p id="msg">' +
-    String(message)
-      .replace(/&/g, '&amp;')
-      .replace(/</g, '&lt;')
-      .replace(/>/g, '&gt;') +
-    '</p><script>(function(){' +
-    'var payload={type:' +
-    jsString(OAUTH_POPUP_MESSAGE_TYPE) +
-    ',code:' +
-    jsString(payload.code) +
-    ',state:' +
-    jsString(payload.state) +
-    ',error:' +
-    jsString(payload.error) +
-    ',ts:Date.now()};' +
-    'try{if(window.opener){window.opener.postMessage(payload,"*");}}catch(e){}' +
-    'try{localStorage.setItem("phonemos:oauth-result",JSON.stringify(payload));}catch(e){}' +
-    'try{var c=new BroadcastChannel("phonemos-oauth");c.postMessage(payload);c.close();}catch(e){}' +
-    'setTimeout(function(){try{window.close();}catch(e){}},500);' +
-    '})();</script></body></html>'
-  );
+function storePendingResult(ctx, state, code, error) {
+  const userId = ctx.currentUser && ctx.currentUser.id ? String(ctx.currentUser.id) : null;
+  if (!state || !userId || !(code || error)) {
+    return false;
+  }
+  const now = Date.now();
+  const map = prunePendingMap(readPendingMap(ctx), now);
+  map[String(state)] = {
+    code: code || null,
+    error: error || null,
+    userId: userId,
+    ts: now,
+  };
+  writePendingMap(ctx, map);
+  return true;
 }
 
 function requireSettings(ctx) {
@@ -187,7 +169,6 @@ exports.httpHandler = {
           'phonemosBaseUrl',
           'oauthClientId',
           'oauthAuthorizationUrl',
-          'oauthRedirectUri',
         ]);
         if (missing.length) {
           return ctx.response.json({
@@ -199,7 +180,7 @@ exports.httpHandler = {
           success: true,
           clientId: settings.oauthClientId,
           authorizationUrl: settings.oauthAuthorizationUrl,
-          redirectUri: settings.oauthRedirectUri,
+          redirectUri: settings.oauthRedirectUri || '',
           phonemosBaseUrl: settings.phonemosBaseUrl,
           popupMessageType: OAUTH_POPUP_MESSAGE_TYPE,
         });
@@ -214,7 +195,6 @@ exports.httpHandler = {
         const missing = missingSettings(settings, [
           'oauthClientId',
           'oauthAuthorizationUrl',
-          'oauthRedirectUri',
         ]);
         if (missing.length) {
           return ctx.response.json({
@@ -233,6 +213,12 @@ exports.httpHandler = {
         }
 
         const redirectUri = ctx.request.getParameter('redirect_uri') || settings.oauthRedirectUri;
+        if (!redirectUri) {
+          return ctx.response.json({
+            success: false,
+            message: 'redirect_uri is required.',
+          });
+        }
         const params = [
           'response_type=code',
           'client_id=' + encodeURIComponent(settings.oauthClientId),
@@ -254,34 +240,24 @@ exports.httpHandler = {
     },
     {
       scope: 'global',
-      method: 'GET',
-      path: 'oauth/callback',
+      method: 'POST',
+      path: 'oauth/complete',
       handle: function handle(ctx) {
-        const code = ctx.request.getParameter('code');
-        const state = ctx.request.getParameter('state');
-        const error =
-          ctx.request.getParameter('error_description') || ctx.request.getParameter('error');
-        const userId = ctx.currentUser && ctx.currentUser.id ? String(ctx.currentUser.id) : null;
-        const now = Date.now();
-
-        if (state && userId && (code || error)) {
-          const map = prunePendingMap(readPendingMap(ctx), now);
-          map[String(state)] = {
-            code: code || null,
-            error: error || null,
-            userId: userId,
-            ts: now,
-          };
-          writePendingMap(ctx, map);
+        const body = ctx.request.json() || {};
+        const state = body.state;
+        const code = body.code || null;
+        const error = body.error || null;
+        if (!state) {
+          return ctx.response.json({success: false, message: 'state is required.'});
         }
-
-        const html = oauthCallbackHtml({
-          code: code || null,
-          state: state || null,
-          error: error || (!code ? 'Missing authorization code.' : null),
-        });
-        ctx.response.addHeader('Content-Type', 'text/html; charset=utf-8');
-        ctx.response.body = html;
+        if (!code && !error) {
+          return ctx.response.json({success: false, message: 'code or error is required.'});
+        }
+        const stored = storePendingResult(ctx, state, code, error);
+        if (!stored) {
+          return ctx.response.json({success: false, message: 'Unable to store OAuth result.'});
+        }
+        return ctx.response.json({success: true});
       },
     },
     {
@@ -331,7 +307,6 @@ exports.httpHandler = {
           'oauthClientId',
           'oauthClientSecret',
           'oauthTokenUrl',
-          'oauthRedirectUri',
         ]);
         if (missing.length) {
           return ctx.response.json({
@@ -347,11 +322,18 @@ exports.httpHandler = {
             message: 'code and code_verifier are required.',
           });
         }
+        const redirectUri = body.redirect_uri || settings.oauthRedirectUri;
+        if (!redirectUri) {
+          return ctx.response.json({
+            success: false,
+            message: 'redirect_uri is required.',
+          });
+        }
 
         const serviceResponse = exchangeToken(settings, {
           grant_type: 'authorization_code',
           code: body.code,
-          redirect_uri: body.redirect_uri || settings.oauthRedirectUri,
+          redirect_uri: redirectUri,
           code_verifier: body.code_verifier,
         });
         return ctx.response.json(mapTokenResponse(serviceResponse));

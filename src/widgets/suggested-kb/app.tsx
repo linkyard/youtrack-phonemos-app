@@ -3,7 +3,14 @@ import Button from '@jetbrains/ring-ui-built/components/button/button';
 import LoaderInline from '@jetbrains/ring-ui-built/components/loader-inline/loader-inline';
 import Link from '@jetbrains/ring-ui-built/components/link/link';
 
-import {clearMemoryTokens, connectPhonemos, ensurePhonemosTokens, getMemoryTokens} from './oauth';
+import {
+  clearMemoryTokens,
+  connectPhonemos,
+  DEFAULT_POPUP_CALLBACK_URL,
+  ensurePhonemosTokens,
+  getMemoryTokens,
+  resolveOAuthRedirectUri,
+} from './oauth';
 
 type SuggestionItem = {
   objectId: string;
@@ -99,6 +106,9 @@ const AppComponent: React.FunctionComponent = () => {
           <Button primary onClick={() => void onConnect()}>
             Connect to Phonemos
           </Button>
+          <p className="muted" style={{whiteSpace: 'pre-wrap', fontSize: '11px'}}>
+            {`Keycloak Valid redirect URIs must include:\n${resolveOAuthRedirectUri()}`}
+          </p>
         </div>
       )}
 

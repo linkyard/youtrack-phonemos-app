@@ -1,6 +1,13 @@
+type AppLocation = {
+  pathname: string;
+  search: string;
+  hash: string;
+};
+
 type AppAPI = {
   onRefresh?: () => void;
   onConfigure?: () => void;
+  onAppLocationChange?: (location: AppLocation) => void;
 }
 
 import type AlertType from '@jetbrains/ring-ui-built/components/alert/alert';
@@ -27,12 +34,6 @@ interface BaseAPILayer {
 export interface InstanceAwareAPILayer extends BaseAPILayer {
   fetchYouTrack: <T = unknown>(relativeURL: string, requestParams?: RequestParams) => Promise<T>;
 }
-
-type AppLocation = {
-  pathname: string;
-  search: string;
-  hash: string;
-};
 
 /*
  * This layer allows plugin to communicate with own backend

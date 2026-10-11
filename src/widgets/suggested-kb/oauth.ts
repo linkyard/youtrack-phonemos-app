@@ -1,6 +1,13 @@
 import {waitForOAuthResult} from '../shared/oauth-result';
+import {
+  DEFAULT_POPUP_CALLBACK_URL,
+  deriveOAuthCallbackUrl,
+  resolveOAuthRedirectUri,
+} from '../shared/redirect-uri';
 
 type HostAPI = Awaited<ReturnType<typeof YTApp.register>>;
+
+export {DEFAULT_POPUP_CALLBACK_URL, deriveOAuthCallbackUrl, resolveOAuthRedirectUri};
 
 export type PhonemosTokens = {
   accessToken: string;
@@ -92,8 +99,15 @@ export async function ensurePhonemosTokens(host: HostAPI): Promise<PhonemosToken
 
 export async function connectPhonemos(host: HostAPI): Promise<PhonemosTokens> {
   const config = await host.fetchApp<OAuthConfig>('backend/oauth/config', {method: 'GET'});
-  if (!config.success || !config.redirectUri) {
+  if (!config.success) {
     throw new Error(config.message || 'Phonemos OAuth is not configured.');
+  }
+
+  let redirectUri: string;
+  try {
+    redirectUri = resolveOAuthRedirectUri(config.redirectUri);
+  } catch (e) {
+    throw new Error(e instanceof Error ? e.message : 'OAuth redirect URI is not configured.');
   }
 
   const state = randomUrlSafe(16);
@@ -107,7 +121,7 @@ export async function connectPhonemos(host: HostAPI): Promise<PhonemosTokens> {
       query: {
         state,
         code_challenge: codeChallenge,
-        redirect_uri: config.redirectUri,
+        redirect_uri: redirectUri,
       },
     },
   );
@@ -127,7 +141,7 @@ export async function connectPhonemos(host: HostAPI): Promise<PhonemosTokens> {
     body: {
       code,
       code_verifier: codeVerifier,
-      redirect_uri: config.redirectUri,
+      redirect_uri: redirectUri,
     },
   });
 

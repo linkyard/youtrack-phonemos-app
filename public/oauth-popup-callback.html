@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Phonemos sign-in</title>
+    <style>
+      body {
+        font-family: system-ui, sans-serif;
+        padding: 24px;
+        color: #1b1b1b;
+        background: #fff;
+      }
+      @media (prefers-color-scheme: dark) {
+        body {
+          color: #f2f2f2;
+          background: #1b1b1b;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Phonemos</h1>
+    <p id="msg">Completing sign-in…</p>
+    <script>
+      (function () {
+        var MESSAGE_TYPE = 'phonemos:oauth';
+        var params = new URLSearchParams(window.location.search);
+        if (!params.get('code') && !params.get('error') && window.location.hash) {
+          var hash = window.location.hash.charAt(0) === '#' ? window.location.hash.slice(1) : window.location.hash;
+          if (hash.indexOf('=') >= 0) {
+            params = new URLSearchParams(hash);
+          }
+        }
+        var code = params.get('code');
+        var state = params.get('state');
+        var error = params.get('error_description') || params.get('error');
+        var msg = document.getElementById('msg');
+        if (!(code || error)) {
+          msg.textContent = 'No authorization response found. You can close this window.';
+          return;
+        }
+        var payload = {
+          type: MESSAGE_TYPE,
+          code: code,
+          state: state,
+          error: error,
+          ts: Date.now(),
+        };
+        var serialized = JSON.stringify(payload);
+        // Survives cross-origin OAuth redirects; opener polls window.name.
+        try {
+          window.name = 'phonemos-oauth:' + serialized;
+        } catch (e) {}
+        try {
+          if (window.opener) {
+            window.opener.postMessage(payload, '*');
+          }
+        } catch (e) {}
+        try {
+          localStorage.setItem('phonemos:oauth-result', serialized);
+        } catch (e) {}
+        try {
+          var channel = new BroadcastChannel('phonemos-oauth');
+          channel.postMessage(payload);
+          channel.close();
+        } catch (e) {}
+        msg.textContent = error ? 'Sign-in failed: ' + error : 'Signed in. You can close this window.';
+        setTimeout(function () {
+          try {
+            // about:blank keeps window.name readable for the opener after COOP navigations.
+            window.location.replace('about:blank');
+          } catch (e) {
+            try {
+              window.close();
+            } catch (e2) {}
+          }
+        }, 250);
+      })();
+    </script>
+  </body>
+</html>
