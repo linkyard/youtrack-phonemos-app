@@ -24,6 +24,7 @@
     <script>
       (function () {
         var MESSAGE_TYPE = 'phonemos:oauth';
+        var APP_NAME = 'phonemos';
         var params = new URLSearchParams(window.location.search);
         if (!params.get('code') && !params.get('error') && window.location.hash) {
           var hash = window.location.hash.charAt(0) === '#' ? window.location.hash.slice(1) : window.location.hash;
@@ -39,6 +40,7 @@
           msg.textContent = 'No authorization response found. You can close this window.';
           return;
         }
+
         var payload = {
           type: MESSAGE_TYPE,
           code: code,
@@ -46,33 +48,99 @@
           error: error,
           ts: Date.now(),
         };
-        var serialized = JSON.stringify(payload);
-        try {
-          window.name = 'phonemos-oauth:' + serialized;
-        } catch (e) {}
-        try {
-          if (window.opener) {
-            window.opener.postMessage(payload, '*');
-          }
-        } catch (e) {}
-        try {
-          localStorage.setItem('phonemos:oauth-result', serialized);
-        } catch (e) {}
-        try {
-          var channel = new BroadcastChannel('phonemos-oauth');
-          channel.postMessage(payload);
-          channel.close();
-        } catch (e) {}
-        msg.textContent = error ? 'Sign-in failed: ' + error : 'Signed in. You can close this window.';
-        setTimeout(function () {
+
+        function publishLocal() {
+          var serialized = JSON.stringify(payload);
           try {
-            window.location.replace('about:blank');
-          } catch (e) {
+            window.name = 'phonemos-oauth:' + serialized;
+          } catch (e) {}
+          try {
+            if (window.opener) {
+              window.opener.postMessage(payload, '*');
+            }
+          } catch (e) {}
+          try {
+            localStorage.setItem('phonemos:oauth-result', serialized);
+          } catch (e) {}
+          try {
+            var channel = new BroadcastChannel('phonemos-oauth');
+            channel.postMessage(payload);
+            channel.close();
+          } catch (e) {}
+        }
+
+        function closeSoon() {
+          setTimeout(function () {
             try {
-              window.close();
-            } catch (e2) {}
-          }
-        }, 250);
+              window.location.replace('about:blank');
+            } catch (e) {
+              try {
+                window.close();
+              } catch (e2) {}
+            }
+          }, 400);
+        }
+
+        // Finish token exchange on the YouTrack backend using the browser session.
+        // This survives the ticket widget remounting after the popup closes.
+        var completeUrl =
+          window.location.origin +
+          '/api/extensionEndpoints/' +
+          encodeURIComponent(APP_NAME) +
+          '/backend/oauth/complete';
+
+        msg.textContent = 'Finishing sign-in…';
+        fetch(completeUrl, {
+          method: 'POST',
+          credentials: 'same-origin',
+          headers: {
+            Accept: 'application/json',
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            code: code,
+            state: state,
+            error: error,
+          }),
+        })
+          .then(function (response) {
+            return response
+              .json()
+              .catch(function () {
+                return {success: false, message: 'HTTP ' + response.status};
+              })
+              .then(function (data) {
+                return {ok: response.ok, data: data || {}};
+              });
+          })
+          .then(function (result) {
+            publishLocal();
+            if (error) {
+              msg.textContent = 'Sign-in failed: ' + error;
+              closeSoon();
+              return;
+            }
+            if (result.data && result.data.connected) {
+              msg.textContent = 'Signed in. You can close this window.';
+            } else if (result.data && result.data.success) {
+              msg.textContent =
+                'Signed in (waiting for ticket widget). You can close this window.';
+            } else {
+              msg.textContent =
+                'Sign-in may be incomplete: ' +
+                ((result.data && result.data.message) || 'unknown error') +
+                '. You can close this window.';
+            }
+            closeSoon();
+          })
+          .catch(function (e) {
+            publishLocal();
+            msg.textContent =
+              'Could not reach YouTrack to finish sign-in (' +
+              (e && e.message ? e.message : 'network error') +
+              '). You can close this window.';
+            closeSoon();
+          });
       })();
     </script>
   </body>

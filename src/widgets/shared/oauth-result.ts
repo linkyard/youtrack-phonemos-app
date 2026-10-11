@@ -199,8 +199,8 @@ export function waitForOAuthResult(
     };
 
     const accept = (data: OAuthResultPayload) => {
-      if (data.state && data.state !== expectedState) {
-        settle(() => reject(new Error('OAuth state mismatch.')));
+      // Ignore stale results from earlier attempts — never reject/close on mismatch.
+      if (!data.state || data.state !== expectedState) {
         return;
       }
       if (data.error) {
@@ -265,14 +265,14 @@ export function waitForOAuthResult(
     const poll = window.setInterval(() => {
       void (async () => {
         const fromName = readPopupName();
-        if (fromName && (!fromName.state || fromName.state === expectedState)) {
+        if (fromName) {
           accept(fromName);
           return;
         }
 
         try {
           const local = parseOAuthResult(localStorage.getItem(OAUTH_LOCAL_STORAGE_KEY));
-          if (local && (!local.state || local.state === expectedState)) {
+          if (local) {
             accept(local);
             return;
           }
@@ -283,7 +283,7 @@ export function waitForOAuthResult(
         if (host.storage?.getItem) {
           try {
             const stored = parseOAuthResult(await host.storage.getItem(OAUTH_STORAGE_KEY));
-            if (stored && (!stored.state || stored.state === expectedState)) {
+            if (stored) {
               accept(stored);
               return;
             }
@@ -352,11 +352,8 @@ export function waitForOAuthResult(
       } catch {
         // ignore
       }
-      try {
-        popup?.close();
-      } catch {
-        // ignore
-      }
+      // Do not close the popup here — a parallel session waiter may still need it,
+      // and rejecting on stale results must never kill an in-progress login.
     };
 
     window.addEventListener('message', onMessage);

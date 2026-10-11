@@ -4,10 +4,10 @@ import LoaderInline from '@jetbrains/ring-ui-built/components/loader-inline/load
 import Link from '@jetbrains/ring-ui-built/components/link/link';
 
 import {
-  clearMemoryTokens,
+  clearPhonemosSession,
   connectPhonemos,
   ensurePhonemosTokens,
-  getMemoryTokens,
+  formatUnknownError,
   getRedirectDebugInfo,
   resolveOAuthRedirectUri,
 } from './oauth';
@@ -48,20 +48,23 @@ const AppComponent: React.FunctionComponent = () => {
     setStatus('loading');
     setError(null);
     try {
-      if (!getMemoryTokens()) {
+      const tokens = await ensurePhonemosTokens(host);
+      if (!tokens) {
         setStatus('needs-auth');
         return;
       }
-      const tokens = await ensurePhonemosTokens(host);
       const response = await host.fetchApp<SuggestionsResponse>('suggestions/list', {
         method: 'POST',
         scope: true,
         body: {accessToken: tokens.accessToken},
       });
       if (!response.success) {
+        // Keep the session visible in the error UI — silent needs-auth looked like an
+        // endless Connect loop when Phonemos search rejected the token.
         if (/401|403|unauthorized|invalid.?token/i.test(response.message || '')) {
-          clearMemoryTokens();
-          setStatus('needs-auth');
+          await clearPhonemosSession(host);
+          setError(response.message || 'Phonemos rejected the access token.');
+          setStatus('error');
           return;
         }
         throw new Error(response.message || 'Unable to load suggestions.');
@@ -87,7 +90,7 @@ const AppComponent: React.FunctionComponent = () => {
       await connectPhonemos(host);
       await loadSuggestions();
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Phonemos sign-in failed.');
+      setError(formatUnknownError(e));
       setStatus('error');
     }
   }, [loadSuggestions]);

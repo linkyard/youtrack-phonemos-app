@@ -39,7 +39,7 @@ function prunePendingMap(map, now) {
 }
 
 function storePendingResult(ctx, state, code, error) {
-  const userId = ctx.currentUser && ctx.currentUser.id ? String(ctx.currentUser.id) : null;
+  const userId = currentUserId(ctx);
   if (!state || !userId || !(code || error)) {
     return false;
   }
@@ -53,6 +53,162 @@ function storePendingResult(ctx, state, code, error) {
   };
   writePendingMap(ctx, map);
   return true;
+}
+
+function clearPendingResult(ctx, state) {
+  if (!state) {
+    return;
+  }
+  const map = prunePendingMap(readPendingMap(ctx), Date.now());
+  delete map[String(state)];
+  writePendingMap(ctx, map);
+}
+
+function currentUserId(ctx) {
+  const user = ctx.currentUser;
+  if (!user) {
+    return null;
+  }
+  // Workflow User often has login but not a usable .id in HTTP handlers.
+  if (user.login) {
+    return String(user.login);
+  }
+  if (user.id != null && String(user.id) !== '') {
+    return String(user.id);
+  }
+  return null;
+}
+
+function readLoginMap(ctx) {
+  const raw = ctx.globalStorage.extensionProperties.oauthLogins;
+  if (!raw) {
+    return {};
+  }
+  try {
+    const parsed = JSON.parse(String(raw));
+    return parsed && typeof parsed === 'object' ? parsed : {};
+  } catch (e) {
+    return {};
+  }
+}
+
+function writeLoginMap(ctx, map) {
+  ctx.globalStorage.extensionProperties.oauthLogins = JSON.stringify(map);
+}
+
+function storeLogin(ctx, state, codeVerifier, redirectUri) {
+  const userId = currentUserId(ctx);
+  if (!state || !userId || !codeVerifier || !redirectUri) {
+    return false;
+  }
+  const now = Date.now();
+  const map = prunePendingMap(readLoginMap(ctx), now);
+  map[String(state)] = {
+    userId: userId,
+    codeVerifier: String(codeVerifier),
+    redirectUri: String(redirectUri),
+    ts: now,
+  };
+  writeLoginMap(ctx, map);
+  return true;
+}
+
+function readLogin(ctx, state) {
+  const userId = currentUserId(ctx);
+  if (!state || !userId) {
+    return null;
+  }
+  const now = Date.now();
+  const map = prunePendingMap(readLoginMap(ctx), now);
+  writeLoginMap(ctx, map);
+  const entry = map[String(state)];
+  if (!entry || String(entry.userId) !== userId) {
+    return null;
+  }
+  return entry;
+}
+
+function clearLogin(ctx, state) {
+  if (!state) {
+    return;
+  }
+  const map = prunePendingMap(readLoginMap(ctx), Date.now());
+  delete map[String(state)];
+  writeLoginMap(ctx, map);
+}
+
+function readSessionMap(ctx) {
+  const raw = ctx.globalStorage.extensionProperties.oauthSessions;
+  if (!raw) {
+    return {};
+  }
+  try {
+    const parsed = JSON.parse(String(raw));
+    return parsed && typeof parsed === 'object' ? parsed : {};
+  } catch (e) {
+    return {};
+  }
+}
+
+function writeSessionMap(ctx, map) {
+  ctx.globalStorage.extensionProperties.oauthSessions = JSON.stringify(map);
+}
+
+function readUserTokens(ctx) {
+  const userId = currentUserId(ctx);
+  if (!userId) {
+    return null;
+  }
+  const entry = readSessionMap(ctx)[userId];
+  if (!entry || !entry.accessToken) {
+    return null;
+  }
+  return {
+    accessToken: String(entry.accessToken),
+    refreshToken: entry.refreshToken ? String(entry.refreshToken) : null,
+    expiresAt: entry.expiresAt != null ? Number(entry.expiresAt) : null,
+  };
+}
+
+function writeUserTokens(ctx, tokens) {
+  const userId = currentUserId(ctx);
+  if (!userId || !tokens || !tokens.accessToken) {
+    return false;
+  }
+  const map = readSessionMap(ctx);
+  map[userId] = {
+    accessToken: String(tokens.accessToken),
+    refreshToken: tokens.refreshToken ? String(tokens.refreshToken) : null,
+    expiresAt: tokens.expiresAt != null ? Number(tokens.expiresAt) : null,
+    ts: Date.now(),
+  };
+  writeSessionMap(ctx, map);
+  return true;
+}
+
+function clearUserTokens(ctx) {
+  const userId = currentUserId(ctx);
+  if (!userId) {
+    return false;
+  }
+  const map = readSessionMap(ctx);
+  if (!map[userId]) {
+    return true;
+  }
+  delete map[userId];
+  writeSessionMap(ctx, map);
+  return true;
+}
+
+function tokensFromMappedResponse(mapped) {
+  if (!mapped || !mapped.success || !mapped.accessToken) {
+    return null;
+  }
+  return {
+    accessToken: mapped.accessToken,
+    refreshToken: mapped.refreshToken || null,
+    expiresAt: mapped.expiresAt != null ? mapped.expiresAt : null,
+  };
 }
 
 function trimSetting(value) {
@@ -194,11 +350,15 @@ function mapTokenResponse(serviceResponse, debug) {
         ),
     };
   }
+  const expiresIn = data.expires_in != null ? Number(data.expires_in) : null;
   return {
     success: true,
     accessToken: data.access_token,
     refreshToken: data.refresh_token || null,
-    expiresIn: data.expires_in || null,
+    expiresIn: expiresIn,
+    expiresAt: expiresIn
+      ? Date.now() + expiresIn * 1000 - 30 * 1000
+      : null,
     tokenType: data.token_type || 'Bearer',
   };
 }
@@ -251,10 +411,11 @@ exports.httpHandler = {
 
         const state = ctx.request.getParameter('state');
         const codeChallenge = ctx.request.getParameter('code_challenge');
-        if (!state || !codeChallenge) {
+        const codeVerifier = ctx.request.getParameter('code_verifier');
+        if (!state || !codeChallenge || !codeVerifier) {
           return ctx.response.json({
             success: false,
-            message: 'state and code_challenge query parameters are required.',
+            message: 'state, code_challenge, and code_verifier query parameters are required.',
           });
         }
 
@@ -263,6 +424,21 @@ exports.httpHandler = {
           return ctx.response.json({
             success: false,
             message: 'redirect_uri is required.',
+          });
+        }
+        if (!storeLogin(ctx, state, codeVerifier, redirectUri)) {
+          const user = ctx.currentUser;
+          return ctx.response.json({
+            success: false,
+            message:
+              'Unable to start OAuth login — no YouTrack user key on this request ' +
+              '(currentUser=' +
+              (user ? 'yes' : 'no') +
+              ', login=' +
+              (user && user.login ? String(user.login) : '') +
+              ', id=' +
+              (user && user.id != null ? String(user.id) : '') +
+              ').',
           });
         }
         const params = [
@@ -299,11 +475,81 @@ exports.httpHandler = {
         if (!code && !error) {
           return ctx.response.json({success: false, message: 'code or error is required.'});
         }
-        const stored = storePendingResult(ctx, state, code, error);
-        if (!stored) {
-          return ctx.response.json({success: false, message: 'Unable to store OAuth result.'});
+
+        // Always stash the raw result so a surviving parent widget can finish.
+        storePendingResult(ctx, state, code, error);
+
+        if (error) {
+          clearLogin(ctx, state);
+          return ctx.response.json({success: true, connected: false, finalized: false, error: String(error)});
         }
-        return ctx.response.json({success: true});
+
+        // Prefer finishing the token exchange here so the issue widget can remount
+        // safely and just read oauth/session.
+        const login = readLogin(ctx, state);
+        if (!login || !login.codeVerifier || !login.redirectUri) {
+          return ctx.response.json({
+            success: true,
+            connected: false,
+            finalized: false,
+            message: 'Login verifier missing; parent widget must finish token exchange.',
+          });
+        }
+
+        const settings = requireSettings(ctx);
+        const missing = missingSettings(settings, [
+          'oauthClientId',
+          'oauthClientSecret',
+          'oauthTokenUrl',
+        ]);
+        if (missing.length) {
+          return ctx.response.json({
+            success: false,
+            connected: false,
+            finalized: false,
+            message: 'Missing app settings: ' + missing.join(', '),
+          });
+        }
+        if (isMaskedOrInvalidSecret(settings.oauthClientSecret)) {
+          return ctx.response.json({
+            success: false,
+            connected: false,
+            finalized: false,
+            message: 'OAuth client secret in YouTrack settings looks invalid.',
+          });
+        }
+
+        const mapped = mapTokenResponse(
+          exchangeToken(settings, {
+            grant_type: 'authorization_code',
+            code: String(code),
+            redirect_uri: String(login.redirectUri),
+            code_verifier: String(login.codeVerifier),
+          }),
+          {
+            authMethod: 'client_secret_post',
+            tokenUrl: settings.oauthTokenUrl,
+            clientId: settings.oauthClientId,
+            clientSecret: maskSecret(settings.oauthClientSecret),
+            redirectUri: login.redirectUri,
+            grantType: 'authorization_code',
+            source: 'oauth/complete',
+          },
+        );
+        const tokens = tokensFromMappedResponse(mapped);
+        if (!tokens) {
+          clearLogin(ctx, state);
+          return ctx.response.json({
+            success: false,
+            connected: false,
+            finalized: false,
+            message: mapped.message || 'Token exchange failed.',
+          });
+        }
+        writeUserTokens(ctx, tokens);
+        clearLogin(ctx, state);
+        clearPendingResult(ctx, state);
+        return ctx.response.json({success: true, connected: true, finalized: true});
       },
     },
     {
@@ -315,7 +561,7 @@ exports.httpHandler = {
         if (!state) {
           return ctx.response.json({success: false, message: 'state is required.'});
         }
-        const userId = ctx.currentUser && ctx.currentUser.id ? String(ctx.currentUser.id) : null;
+        const userId = currentUserId(ctx);
         if (!userId) {
           return ctx.response.json({success: false, message: 'Not authenticated.'});
         }
@@ -405,7 +651,12 @@ exports.httpHandler = {
           redirect_uri: redirectUri,
           code_verifier: codeVerifier,
         });
-        return ctx.response.json(mapTokenResponse(serviceResponse, debug));
+        const mapped = mapTokenResponse(serviceResponse, debug);
+        const tokens = tokensFromMappedResponse(mapped);
+        if (tokens) {
+          writeUserTokens(ctx, tokens);
+        }
+        return ctx.response.json(mapped);
       },
     },
     {
@@ -427,7 +678,9 @@ exports.httpHandler = {
         }
 
         const body = ctx.request.json() || {};
-        if (!body.refreshToken) {
+        const stored = readUserTokens(ctx);
+        const refreshToken = body.refreshToken || (stored && stored.refreshToken);
+        if (!refreshToken) {
           return ctx.response.json({
             success: false,
             message: 'refreshToken is required.',
@@ -443,9 +696,48 @@ exports.httpHandler = {
         };
         const serviceResponse = exchangeToken(settings, {
           grant_type: 'refresh_token',
-          refresh_token: body.refreshToken,
+          refresh_token: refreshToken,
         });
-        return ctx.response.json(mapTokenResponse(serviceResponse, debug));
+        const mapped = mapTokenResponse(serviceResponse, debug);
+        const tokens = tokensFromMappedResponse(mapped);
+        if (tokens) {
+          // Keycloak may omit refresh_token on refresh; keep the previous one.
+          if (!tokens.refreshToken) {
+            tokens.refreshToken = refreshToken;
+            mapped.refreshToken = refreshToken;
+          }
+          writeUserTokens(ctx, tokens);
+        } else {
+          clearUserTokens(ctx);
+        }
+        return ctx.response.json(mapped);
+      },
+    },
+    {
+      scope: 'global',
+      method: 'GET',
+      path: 'oauth/session',
+      handle: function handle(ctx) {
+        const tokens = readUserTokens(ctx);
+        if (!tokens) {
+          return ctx.response.json({success: true, connected: false});
+        }
+        return ctx.response.json({
+          success: true,
+          connected: true,
+          accessToken: tokens.accessToken,
+          refreshToken: tokens.refreshToken,
+          expiresAt: tokens.expiresAt,
+        });
+      },
+    },
+    {
+      scope: 'global',
+      method: 'POST',
+      path: 'oauth/logout',
+      handle: function handle(ctx) {
+        clearUserTokens(ctx);
+        return ctx.response.json({success: true, connected: false});
       },
     },
   ],

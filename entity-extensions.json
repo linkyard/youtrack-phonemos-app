@@ -5,6 +5,12 @@
       "properties": {
         "oauthPending": {
           "type": "string"
+        },
+        "oauthSessions": {
+          "type": "string"
+        },
+        "oauthLogins": {
+          "type": "string"
         }
       }
     }
