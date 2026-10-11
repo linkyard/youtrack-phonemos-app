@@ -54,18 +54,11 @@
           try {
             window.name = 'phonemos-oauth:' + serialized;
           } catch (e) {}
+          // Same-origin opener only — never postMessage('*'), BroadcastChannel, or localStorage.
           try {
             if (window.opener) {
-              window.opener.postMessage(payload, '*');
+              window.opener.postMessage(payload, window.location.origin);
             }
-          } catch (e) {}
-          try {
-            localStorage.setItem('phonemos:oauth-result', serialized);
-          } catch (e) {}
-          try {
-            var channel = new BroadcastChannel('phonemos-oauth');
-            channel.postMessage(payload);
-            channel.close();
           } catch (e) {}
         }
 

@@ -75,19 +75,12 @@ const AppComponent: React.FunctionComponent = () => {
           ts: Date.now(),
         };
         try {
-          (window.opener || window.top?.opener)?.postMessage(payload, '*');
+          window.name = `phonemos-oauth:${JSON.stringify(payload)}`;
         } catch {
           // ignore
         }
         try {
-          localStorage.setItem('phonemos:oauth-result', JSON.stringify(payload));
-        } catch {
-          // ignore
-        }
-        try {
-          const channel = new BroadcastChannel('phonemos-oauth');
-          channel.postMessage(payload);
-          channel.close();
+          (window.opener || window.top?.opener)?.postMessage(payload, window.location.origin);
         } catch {
           // ignore
         }

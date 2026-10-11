@@ -63,7 +63,9 @@ npm run pack
 
    **OAuth client secret** is a YouTrack secret setting: paste the Keycloak secret once and save. After that the UI only shows a mask; the real value is injected only into outbound token requests via HTTP Basic (`client_secret_basic`). If token exchange fails after an app upgrade, clear the secret field, paste the full Keycloak secret again, and save.
 
-The callback HTML returns the authorization code to the ticket widget via `postMessage` / `window.name`.
+Outbound URLs (`Phonemos base URL`, OAuth authorization/token URLs) must be `https` (or `http` on localhost). Authorization and token URLs must share the same host.
+
+The callback finishes on the YouTrack backend and notifies the opener via same-origin `postMessage` / `window.name`.
 
 ### Search
 
@@ -91,8 +93,8 @@ If every strategy returns zero hits, the widget shows the query/`within` UUID an
 ## Auth flow
 
 1. Widget opens a Keycloak authorize popup (PKCE).
-2. Callback page `postMessage`s the authorization code to the opener.
-3. YouTrack HTTP handler exchanges the code using the client secret and stores tokens **server-side** (refresh tokens never leave the YouTrack backend).
+2. Callback page finishes via authenticated `oauth/complete` and notifies the same-origin opener (`postMessage` with a concrete origin — not `*`, BroadcastChannel, or `localStorage`).
+3. YouTrack HTTP handler exchanges the code using the client secret and stores tokens **server-side on the YouTrack User** (`phonemosOAuthSession` extension property). Refresh tokens never leave the YouTrack backend and are not kept in a shared app-wide blob.
 4. Suggestions are loaded via an issue-scoped handler that uses the **server-stored** access token for the current YouTrack user (the widget never sends a Bearer token). Phonemos still enforces that user’s permissions.
 
 Shared SSO (YouTrack and Phonemos on the same Keycloak) makes reconnects nearly silent; otherwise users sign in to Phonemos once per browser session.

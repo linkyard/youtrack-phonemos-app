@@ -4,6 +4,7 @@
  */
 const http = require('@jetbrains/youtrack-scripting-api/http');
 const phonemosSession = require('./phonemos-session');
+const urlSafety = require('./url-safety');
 
 const OAUTH_POPUP_MESSAGE_TYPE = 'phonemos:oauth';
 const OAUTH_PENDING_TTL_MS = 5 * 60 * 1000;
@@ -208,19 +209,7 @@ function parseJsonSafe(response) {
 
 function describeHttpResponse(serviceResponse) {
   if (!serviceResponse) {
-    return {status: 'null', bodyPreview: ''};
-  }
-  let raw = '';
-  try {
-    if (serviceResponse.body != null) {
-      raw = String(serviceResponse.body);
-    } else if (serviceResponse.response != null) {
-      raw = String(serviceResponse.response);
-    } else if (typeof serviceResponse.toString === 'function') {
-      raw = String(serviceResponse.toString());
-    }
-  } catch (e) {
-    raw = '';
+    return {status: 'null', error: '', errorDescription: ''};
   }
   const data = parseJsonSafe(serviceResponse);
   return {
@@ -228,11 +217,14 @@ function describeHttpResponse(serviceResponse) {
     isSuccess: !!serviceResponse.isSuccess,
     error: data && data.error ? String(data.error) : '',
     errorDescription: data && data.error_description ? String(data.error_description) : '',
-    bodyPreview: raw ? raw.substring(0, 500) : data ? JSON.stringify(data).substring(0, 500) : '',
   };
 }
 
 function exchangeToken(settings, formFields) {
+  const unsafe = urlSafety.validateOutboundSettings(settings, ['oauthTokenUrl']);
+  if (unsafe) {
+    return {isSuccess: false, code: 0, body: unsafe};
+  }
   const tokenUrl = settings.oauthTokenUrl;
   const slash = tokenUrl.indexOf('/', tokenUrl.indexOf('://') + 3);
   const origin = slash === -1 ? tokenUrl : tokenUrl.substring(0, slash);
@@ -259,40 +251,31 @@ function exchangeToken(settings, formFields) {
   return connection.postSync(path, null, bodyParts.join('&'));
 }
 
-function mapTokenResponse(serviceResponse, debug) {
+function mapTokenResponse(serviceResponse) {
   const httpInfo = describeHttpResponse(serviceResponse);
   if (!serviceResponse || !serviceResponse.isSuccess) {
-    const detail = httpInfo.errorDescription || httpInfo.error || httpInfo.bodyPreview || '';
+    // Local validation failures use code 0 + plain-text body; IdP errors use JSON fields only.
+    const localMessage =
+      serviceResponse && serviceResponse.code === 0 && serviceResponse.body
+        ? String(serviceResponse.body)
+        : '';
+    if (localMessage) {
+      return {success: false, message: localMessage};
+    }
+    const detail = httpInfo.errorDescription || httpInfo.error || '';
     return {
       success: false,
       message:
         'Token endpoint returned status ' +
         httpInfo.status +
-        (detail ? ': ' + detail : '.') +
-        '\nDebug: ' +
-        JSON.stringify(
-          Object.assign({}, debug || {}, {
-            httpStatus: httpInfo.status,
-            httpSuccess: httpInfo.isSuccess,
-            keycloakError: httpInfo.error || null,
-            keycloakErrorDescription: httpInfo.errorDescription || null,
-            responseBodyPreview: httpInfo.bodyPreview || null,
-          }),
-        ),
+        (detail ? ': ' + detail : '.'),
     };
   }
   const data = parseJsonSafe(serviceResponse);
   if (!data || !data.access_token) {
     return {
       success: false,
-      message:
-        'Token endpoint did not return an access token.\nDebug: ' +
-        JSON.stringify(
-          Object.assign({}, debug || {}, {
-            httpStatus: httpInfo.status,
-            responseBodyPreview: httpInfo.bodyPreview || null,
-          }),
-        ),
+      message: 'Token endpoint did not return an access token.',
     };
   }
   const expiresIn = data.expires_in != null ? Number(data.expires_in) : null;
@@ -327,6 +310,14 @@ exports.httpHandler = {
             message: 'Missing app settings: ' + missing.join(', '),
           });
         }
+        const unsafe = urlSafety.validateOutboundSettings(settings, [
+          'phonemosBaseUrl',
+          'oauthAuthorizationUrl',
+          'oauthTokenUrl',
+        ]);
+        if (unsafe) {
+          return ctx.response.json({success: false, message: unsafe});
+        }
         return ctx.response.json({
           success: true,
           clientId: settings.oauthClientId,
@@ -354,6 +345,13 @@ exports.httpHandler = {
             success: false,
             message: 'Missing app settings: ' + missing.join(', '),
           });
+        }
+        const unsafe = urlSafety.validateOutboundSettings(settings, [
+          'oauthAuthorizationUrl',
+          'oauthTokenUrl',
+        ]);
+        if (unsafe) {
+          return ctx.response.json({success: false, message: unsafe});
         }
 
         const body = ctx.request.json() || {};
@@ -468,15 +466,6 @@ exports.httpHandler = {
             redirect_uri: String(login.redirectUri),
             code_verifier: String(login.codeVerifier),
           }),
-          {
-            authMethod: 'client_secret_basic',
-            tokenUrl: settings.oauthTokenUrl,
-            clientId: settings.oauthClientId,
-            clientSecret: '(youtrack-secret)',
-            redirectUri: login.redirectUri,
-            grantType: 'authorization_code',
-            source: 'oauth/complete',
-          },
         );
         const tokens = tokensFromMappedResponse(mapped);
         if (!tokens) {
@@ -564,24 +553,13 @@ exports.httpHandler = {
         }
         const code = String(body.code);
         const codeVerifier = String(body.code_verifier);
-        const debug = {
-          authMethod: 'client_secret_basic',
-          tokenUrl: settings.oauthTokenUrl,
-          clientId: settings.oauthClientId,
-          clientSecret: '(youtrack-secret)',
-          redirectUri: redirectUri,
-          codeLen: code.length,
-          codePrefix: code.substring(0, 8),
-          codeVerifierLen: codeVerifier.length,
-          grantType: 'authorization_code',
-        };
         const serviceResponse = exchangeToken(settings, {
           grant_type: 'authorization_code',
           code: code,
           redirect_uri: redirectUri,
           code_verifier: codeVerifier,
         });
-        const mapped = mapTokenResponse(serviceResponse, debug);
+        const mapped = mapTokenResponse(serviceResponse);
         const tokens = tokensFromMappedResponse(mapped);
         if (tokens) {
           writeUserTokens(ctx, tokens);
@@ -619,18 +597,11 @@ exports.httpHandler = {
           });
         }
 
-        const debug = {
-          authMethod: 'client_secret_basic',
-          tokenUrl: settings.oauthTokenUrl,
-          clientId: settings.oauthClientId,
-          clientSecret: '(youtrack-secret)',
-          grantType: 'refresh_token',
-        };
         const serviceResponse = exchangeToken(settings, {
           grant_type: 'refresh_token',
           refresh_token: refreshToken,
         });
-        const mapped = mapTokenResponse(serviceResponse, debug);
+        const mapped = mapTokenResponse(serviceResponse);
         const tokens = tokensFromMappedResponse(mapped);
         if (tokens) {
           // Keycloak may omit refresh_token on refresh; keep the previous one.

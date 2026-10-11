@@ -1,7 +1,5 @@
 export const OAUTH_RESULT_TYPE = 'phonemos:oauth';
-export const OAUTH_BROADCAST_CHANNEL = 'phonemos-oauth';
 export const OAUTH_STORAGE_KEY = 'phonemos:oauth-result';
-export const OAUTH_LOCAL_STORAGE_KEY = 'phonemos:oauth-result';
 
 export type OAuthResultPayload = {
   type: typeof OAUTH_RESULT_TYPE;
@@ -50,6 +48,15 @@ export function parseOAuthResult(raw: string | null | undefined): OAuthResultPay
   }
 }
 
+/** Same-origin target for opener postMessage (never '*'). */
+export function oauthMessageTargetOrigin(): string {
+  return window.location.origin;
+}
+
+/**
+ * Publish the OAuth code to the opener (same-origin) and finish on the YouTrack backend.
+ * Avoids BroadcastChannel / localStorage broadcasts that widen code exposure.
+ */
 export async function publishOAuthResult(
   host: HostWithStorage,
   payload: Omit<OAuthResultPayload, 'type' | 'ts'>,
@@ -60,29 +67,16 @@ export async function publishOAuthResult(
     ...payload,
   };
 
+  try {
+    window.name = `phonemos-oauth:${JSON.stringify(full)}`;
+  } catch {
+    // ignore
+  }
+
   const opener = window.opener || window.top?.opener || null;
+  const targetOrigin = oauthMessageTargetOrigin();
   try {
-    opener?.postMessage(full, '*');
-  } catch {
-    // ignore
-  }
-
-  try {
-    window.parent?.postMessage(full, '*');
-  } catch {
-    // ignore
-  }
-
-  try {
-    const channel = new BroadcastChannel(OAUTH_BROADCAST_CHANNEL);
-    channel.postMessage(full);
-    channel.close();
-  } catch {
-    // ignore
-  }
-
-  try {
-    localStorage.setItem(OAUTH_LOCAL_STORAGE_KEY, JSON.stringify(full));
+    opener?.postMessage(full, targetOrigin);
   } catch {
     // ignore
   }
@@ -113,11 +107,6 @@ export async function publishOAuthResult(
 }
 
 export async function clearPublishedOAuthResult(host: HostWithStorage): Promise<void> {
-  try {
-    localStorage.removeItem(OAUTH_LOCAL_STORAGE_KEY);
-  } catch {
-    // ignore
-  }
   if (host.storage?.removeItem) {
     try {
       await host.storage.removeItem(OAUTH_STORAGE_KEY);
@@ -188,6 +177,7 @@ export function waitForOAuthResult(
 ): Promise<string> {
   return new Promise((resolve, reject) => {
     let settled = false;
+    const expectedOrigin = oauthMessageTargetOrigin();
 
     const settle = (fn: () => void) => {
       if (settled) {
@@ -218,30 +208,12 @@ export function waitForOAuthResult(
     };
 
     const onMessage = (event: MessageEvent) => {
-      if (isOAuthResult(event.data)) {
-        accept(event.data);
-      }
-    };
-
-    let channel: BroadcastChannel | null = null;
-    try {
-      channel = new BroadcastChannel(OAUTH_BROADCAST_CHANNEL);
-      channel.onmessage = (event) => {
-        if (isOAuthResult(event.data)) {
-          accept(event.data);
-        }
-      };
-    } catch {
-      channel = null;
-    }
-
-    const onStorage = (event: StorageEvent) => {
-      if (event.key !== OAUTH_LOCAL_STORAGE_KEY) {
+      // Require same origin; state matching below rejects foreign flows.
+      if (event.origin !== expectedOrigin) {
         return;
       }
-      const parsed = parseOAuthResult(event.newValue);
-      if (parsed) {
-        accept(parsed);
+      if (isOAuthResult(event.data)) {
+        accept(event.data);
       }
     };
 
@@ -268,16 +240,6 @@ export function waitForOAuthResult(
         if (fromName) {
           accept(fromName);
           return;
-        }
-
-        try {
-          const local = parseOAuthResult(localStorage.getItem(OAUTH_LOCAL_STORAGE_KEY));
-          if (local) {
-            accept(local);
-            return;
-          }
-        } catch {
-          // ignore
         }
 
         if (host.storage?.getItem) {
@@ -327,7 +289,7 @@ export function waitForOAuthResult(
         return;
       }
       if (closedGrace == null) {
-        // Give storage/broadcast a moment after the popup closes.
+        // Give server finalize / storage a moment after the popup closes.
         closedGrace = window.setTimeout(() => {
           settle(() => reject(new Error('Phonemos sign-in was cancelled.')));
         }, 1500);
@@ -346,18 +308,11 @@ export function waitForOAuthResult(
         window.clearTimeout(closedGrace);
       }
       window.removeEventListener('message', onMessage);
-      window.removeEventListener('storage', onStorage);
-      try {
-        channel?.close();
-      } catch {
-        // ignore
-      }
       // Do not close the popup here — a parallel session waiter may still need it,
       // and rejecting on stale results must never kill an in-progress login.
     };
 
     window.addEventListener('message', onMessage);
-    window.addEventListener('storage', onStorage);
     void clearPublishedOAuthResult(host);
   });
 }

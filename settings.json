@@ -6,7 +6,7 @@
   "properties": {
     "phonemosBaseUrl": {
       "title": "Phonemos base URL",
-      "description": "Base URL of the Phonemos instance, e.g. https://wiki.example.com",
+      "description": "Base URL of the Phonemos instance, e.g. https://wiki.example.com (https required; http only for localhost)",
       "type": "string",
       "minLength": 1,
       "x-scope": "GLOBAL"
@@ -27,14 +27,14 @@
     },
     "oauthAuthorizationUrl": {
       "title": "OAuth authorization URL",
-      "description": "Keycloak authorization endpoint, e.g. …/protocol/openid-connect/auth",
+      "description": "Keycloak authorization endpoint, e.g. …/protocol/openid-connect/auth (https; same host as token URL)",
       "type": "string",
       "minLength": 1,
       "x-scope": "GLOBAL"
     },
     "oauthTokenUrl": {
       "title": "OAuth token URL",
-      "description": "Keycloak token endpoint, e.g. …/protocol/openid-connect/token",
+      "description": "Keycloak token endpoint, e.g. …/protocol/openid-connect/token (https; same host as authorization URL)",
       "type": "string",
       "minLength": 1,
       "x-scope": "GLOBAL"

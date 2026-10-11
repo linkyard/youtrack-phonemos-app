@@ -1,8 +1,9 @@
 /**
- * Shared Phonemos OAuth session storage (AppGlobalStorage).
- * Used by global OAuth handlers and the issue-scoped suggestions proxy.
+ * Per-user Phonemos OAuth session storage (User extension property).
+ * Falls back to legacy AppGlobalStorage.oauthSessions for one-time migration.
  */
 const http = require('@jetbrains/youtrack-scripting-api/http');
+const urlSafety = require('./url-safety');
 
 function currentUserId(ctx) {
   const user = ctx.currentUser;
@@ -18,8 +19,37 @@ function currentUserId(ctx) {
   return null;
 }
 
-function readSessionMap(ctx) {
-  const raw = ctx.globalStorage.extensionProperties.oauthSessions;
+function userExtensionProperties(ctx) {
+  const user = ctx.currentUser;
+  if (!user || !user.extensionProperties) {
+    return null;
+  }
+  return user.extensionProperties;
+}
+
+function parseTokenEntry(raw) {
+  if (!raw) {
+    return null;
+  }
+  try {
+    const parsed = typeof raw === 'string' ? JSON.parse(raw) : raw;
+    if (!parsed || typeof parsed !== 'object' || !parsed.accessToken) {
+      return null;
+    }
+    return {
+      accessToken: String(parsed.accessToken),
+      refreshToken: parsed.refreshToken ? String(parsed.refreshToken) : null,
+      expiresAt: parsed.expiresAt != null ? Number(parsed.expiresAt) : null,
+    };
+  } catch (e) {
+    return null;
+  }
+}
+
+function readLegacySessionMap(ctx) {
+  const raw = ctx.globalStorage && ctx.globalStorage.extensionProperties
+    ? ctx.globalStorage.extensionProperties.oauthSessions
+    : null;
   if (!raw) {
     return {};
   }
@@ -31,54 +61,68 @@ function readSessionMap(ctx) {
   }
 }
 
-function writeSessionMap(ctx, map) {
+function writeLegacySessionMap(ctx, map) {
+  if (!ctx.globalStorage || !ctx.globalStorage.extensionProperties) {
+    return;
+  }
   ctx.globalStorage.extensionProperties.oauthSessions = JSON.stringify(map);
 }
 
-function readUserTokens(ctx) {
+function readLegacyUserTokens(ctx) {
   const userId = currentUserId(ctx);
   if (!userId) {
     return null;
   }
-  const entry = readSessionMap(ctx)[userId];
-  if (!entry || !entry.accessToken) {
-    return null;
+  return parseTokenEntry(readLegacySessionMap(ctx)[userId]);
+}
+
+function clearLegacyUserTokens(ctx) {
+  const userId = currentUserId(ctx);
+  if (!userId || !ctx.globalStorage || !ctx.globalStorage.extensionProperties) {
+    return;
   }
-  return {
-    accessToken: String(entry.accessToken),
-    refreshToken: entry.refreshToken ? String(entry.refreshToken) : null,
-    expiresAt: entry.expiresAt != null ? Number(entry.expiresAt) : null,
-  };
+  const map = readLegacySessionMap(ctx);
+  if (!map[userId]) {
+    return;
+  }
+  delete map[userId];
+  writeLegacySessionMap(ctx, map);
+}
+
+function readUserTokens(ctx) {
+  const props = userExtensionProperties(ctx);
+  if (props) {
+    const fromUser = parseTokenEntry(props.phonemosOAuthSession);
+    if (fromUser) {
+      return fromUser;
+    }
+  }
+  return readLegacyUserTokens(ctx);
 }
 
 function writeUserTokens(ctx, tokens) {
-  const userId = currentUserId(ctx);
-  if (!userId || !tokens || !tokens.accessToken) {
+  const props = userExtensionProperties(ctx);
+  if (!props || !tokens || !tokens.accessToken) {
     return false;
   }
-  const map = readSessionMap(ctx);
-  map[userId] = {
+  props.phonemosOAuthSession = JSON.stringify({
     accessToken: String(tokens.accessToken),
     refreshToken: tokens.refreshToken ? String(tokens.refreshToken) : null,
     expiresAt: tokens.expiresAt != null ? Number(tokens.expiresAt) : null,
     ts: Date.now(),
-  };
-  writeSessionMap(ctx, map);
+  });
+  // Drop this user's entry from the shared legacy blob if present.
+  clearLegacyUserTokens(ctx);
   return true;
 }
 
 function clearUserTokens(ctx) {
-  const userId = currentUserId(ctx);
-  if (!userId) {
-    return false;
+  const props = userExtensionProperties(ctx);
+  if (props) {
+    props.phonemosOAuthSession = null;
   }
-  const map = readSessionMap(ctx);
-  if (!map[userId]) {
-    return true;
-  }
-  delete map[userId];
-  writeSessionMap(ctx, map);
-  return true;
+  clearLegacyUserTokens(ctx);
+  return !!props || !!currentUserId(ctx);
 }
 
 function parseJsonSafe(response) {
@@ -90,6 +134,10 @@ function parseJsonSafe(response) {
 }
 
 function exchangeRefreshToken(settings, refreshToken) {
+  const unsafe = urlSafety.validateOutboundSettings(settings, ['oauthTokenUrl']);
+  if (unsafe) {
+    return {isSuccess: false, code: 0, body: unsafe};
+  }
   const tokenUrl = settings.oauthTokenUrl;
   const slash = tokenUrl.indexOf('/', tokenUrl.indexOf('://') + 3);
   const origin = slash === -1 ? tokenUrl : tokenUrl.substring(0, slash);

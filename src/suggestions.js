@@ -4,6 +4,7 @@
  */
 const http = require('@jetbrains/youtrack-scripting-api/http');
 const phonemosSession = require('./phonemos-session');
+const urlSafety = require('./url-safety');
 
 const MAX_QUERY_CHARS = 3500;
 const DEFAULT_SEARCH_LIMIT = 5;
@@ -258,59 +259,11 @@ function buildSearchQueries(issue) {
   return queries;
 }
 
-function base64UrlToString(value) {
-  const normalized = String(value || '')
-    .replace(/-/g, '+')
-    .replace(/_/g, '/');
-  const pad = normalized.length % 4 === 0 ? '' : new Array(5 - (normalized.length % 4)).join('=');
-  const input = normalized + pad;
-  try {
-    if (typeof Buffer !== 'undefined') {
-      return Buffer.from(input, 'base64').toString('utf8');
-    }
-  } catch (e) {
-    // continue
-  }
-  try {
-    const Base64 = Java.type('java.util.Base64');
-    return new java.lang.String(Base64.getDecoder().decode(input), 'UTF-8');
-  } catch (e2) {
-    return null;
-  }
-}
-
-function describeAccessTokenClaims(accessToken) {
-  const raw = String(accessToken || '');
-  const parts = raw.split('.');
-  if (parts.length < 2) {
-    return 'token is opaque/not a JWT (len=' + raw.length + ')';
-  }
-  const json = base64UrlToString(parts[1]);
-  if (!json) {
-    return 'unable to decode JWT payload (len=' + raw.length + ')';
-  }
-  try {
-    const payload = JSON.parse(json);
-    const hasura = payload['https://hasura.io/jwt/claims'] || payload.hasura || null;
-    const keys = Object.keys(payload).slice(0, 12).join(',');
-    return (
-      'jwt aud=' +
-      JSON.stringify(payload.aud || null) +
-      ' azp=' +
-      JSON.stringify(payload.azp || null) +
-      ' scope=' +
-      JSON.stringify(payload.scope || null) +
-      ' hasHasuraClaims=' +
-      String(!!hasura) +
-      ' claimKeys=' +
-      keys
-    );
-  } catch (e) {
-    return 'JWT payload is not JSON';
-  }
-}
-
 function searchPhonemos(settings, accessToken, query, mode, objectTypes) {
+  const unsafe = urlSafety.validateOutboundSettings(settings, ['phonemosBaseUrl']);
+  if (unsafe) {
+    return {isSuccess: false, code: 0, body: unsafe};
+  }
   const limit = settings.searchLimit != null ? Number(settings.searchLimit) : DEFAULT_SEARCH_LIMIT;
   const safeLimit = isNaN(limit) || limit < 1 ? DEFAULT_SEARCH_LIMIT : Math.min(20, Math.floor(limit));
   const payload = {
@@ -473,6 +426,13 @@ exports.httpHandler = {
             message: 'Missing app settings: phonemosBaseUrl',
           });
         }
+        const unsafe = urlSafety.validateOutboundSettings(settings, [
+          'phonemosBaseUrl',
+          'oauthTokenUrl',
+        ]);
+        if (unsafe) {
+          return ctx.response.json({success: false, message: unsafe});
+        }
         if (!settings.withinObjectId) {
           return ctx.response.json({
             success: false,
@@ -523,10 +483,6 @@ exports.httpHandler = {
               '\n\nPhonemos rejected the access token. In Keycloak, open this app’s client → Client scopes ' +
               'and assign the realm scope "hasura" as Default (it adds the Hasura claims Phonemos requires). ' +
               'Also request scope "hasura" (app setting OAuth scopes). Then disconnect/reconnect in the widget.';
-            const claimHint = describeAccessTokenClaims(accessToken);
-            if (claimHint) {
-              message += '\n\nToken debug: ' + claimHint;
-            }
           }
           return ctx.response.json({
             success: false,

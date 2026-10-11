@@ -13,6 +13,14 @@
           "type": "string"
         }
       }
+    },
+    {
+      "entityType": "User",
+      "properties": {
+        "phonemosOAuthSession": {
+          "type": "string"
+        }
+      }
     }
   ]
 }
