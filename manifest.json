@@ -13,7 +13,7 @@
       "key": "suggested-kb",
       "name": "Suggested knowledge base articles",
       "indexPath": "suggested-kb/index.html",
-      "extensionPoint": "ISSUE_BELOW_SUMMARY",
+      "extensionPoint": "ISSUE_ABOVE_ACTIVITY_STREAM",
       "iconPath": "suggested-kb/widget-icon.png",
       "description": "Suggests Phonemos articles for the current helpdesk ticket",
       "permissions": ["READ_ISSUE"],

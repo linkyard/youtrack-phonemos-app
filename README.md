@@ -4,7 +4,7 @@ Suggests Phonemos knowledge base articles on YouTrack Helpdesk tickets. Agents a
 
 ## Features
 
-- **Suggested knowledge base articles** widget under the ticket/issue summary (`ISSUE_BELOW_SUMMARY`)
+- **Suggested knowledge base articles** widget under the ticket description (`ISSUE_ABOVE_ACTIVITY_STREAM`)
 - Hybrid Phonemos search over ticket summary, description, and the latest comment from the reporter
 - Per-user OAuth2 against the Phonemos Keycloak IdP (no shared service-account token)
 
