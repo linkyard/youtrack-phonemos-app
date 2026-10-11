@@ -175,7 +175,9 @@ function requireSettings(ctx) {
   return {
     phonemosBaseUrl: trimTrailingSlash(s.phonemosBaseUrl),
     oauthClientId: trimSetting(s.oauthClientId),
-    oauthClientSecret: trimSetting(s.oauthClientSecret),
+    // Pass the secret setting through untouched — YouTrack injects it only in
+    // http.Connection basicAuth/addHeader; stringifying/trimming breaks that.
+    oauthClientSecret: s.oauthClientSecret,
     oauthAuthorizationUrl: trimSetting(s.oauthAuthorizationUrl),
     oauthTokenUrl: trimSetting(s.oauthTokenUrl),
     oauthRedirectUri: trimSetting(s.oauthRedirectUri),
@@ -189,6 +191,9 @@ function requireSettings(ctx) {
 
 function missingSettings(settings, keys) {
   return keys.filter(function (key) {
+    if (key === 'oauthClientSecret') {
+      return settings[key] == null || settings[key] === '';
+    }
     return settings[key] == null || String(settings[key]).trim() === '';
   });
 }
@@ -199,25 +204,6 @@ function parseJsonSafe(response) {
   } catch (e) {
     return null;
   }
-}
-
-function maskSecret(value) {
-  const s = value == null ? '' : String(value);
-  if (!s) {
-    return '(empty)';
-  }
-  if (/^\*+$/.test(s)) {
-    return '(LOOKS LIKE UI MASK "' + s + '" — re-paste the real Keycloak secret; len=' + s.length + ')';
-  }
-  if (s.length <= 6) {
-    return '(len=' + s.length + ', suspiciously short for a Keycloak secret)';
-  }
-  return s.substring(0, 2) + '…' + s.substring(s.length - 2) + ' (len=' + s.length + ')';
-}
-
-function isMaskedOrInvalidSecret(value) {
-  const s = value == null ? '' : String(value).trim();
-  return !s || s.length < 8 || /^\*+$/.test(s);
 }
 
 function describeHttpResponse(serviceResponse) {
@@ -252,11 +238,11 @@ function exchangeToken(settings, formFields) {
   const origin = slash === -1 ? tokenUrl : tokenUrl.substring(0, slash);
   const path = slash === -1 ? '/' : tokenUrl.substring(slash);
 
-  // Use client_secret_post only. Sending a bad Basic header alongside the body
-  // makes Keycloak ignore the body credentials and return invalid_client.
+  // client_secret_basic: send the YouTrack secret setting via basicAuth so it is
+  // never readable as a plain string in scripts or responses. Do not also put
+  // client_secret in the body (Keycloak then ignores Basic and fails).
   const fields = Object.assign({}, formFields, {
     client_id: settings.oauthClientId,
-    client_secret: settings.oauthClientSecret,
   });
 
   const bodyParts = [];
@@ -267,6 +253,7 @@ function exchangeToken(settings, formFields) {
   });
 
   const connection = new http.Connection(origin);
+  connection.basicAuth(settings.oauthClientId, settings.oauthClientSecret);
   connection.addHeader('Content-Type', 'application/x-www-form-urlencoded');
   connection.addHeader('Accept', 'application/json');
   return connection.postSync(path, null, bodyParts.join('&'));
@@ -474,15 +461,6 @@ exports.httpHandler = {
             message: 'Missing app settings: ' + missing.join(', '),
           });
         }
-        if (isMaskedOrInvalidSecret(settings.oauthClientSecret)) {
-          return ctx.response.json({
-            success: false,
-            connected: false,
-            finalized: false,
-            message: 'OAuth client secret in YouTrack settings looks invalid.',
-          });
-        }
-
         const mapped = mapTokenResponse(
           exchangeToken(settings, {
             grant_type: 'authorization_code',
@@ -491,10 +469,10 @@ exports.httpHandler = {
             code_verifier: String(login.codeVerifier),
           }),
           {
-            authMethod: 'client_secret_post',
+            authMethod: 'client_secret_basic',
             tokenUrl: settings.oauthTokenUrl,
             clientId: settings.oauthClientId,
-            clientSecret: maskSecret(settings.oauthClientSecret),
+            clientSecret: '(youtrack-secret)',
             redirectUri: login.redirectUri,
             grantType: 'authorization_code',
             source: 'oauth/complete',
@@ -584,24 +562,13 @@ exports.httpHandler = {
             message: 'redirect_uri is required.',
           });
         }
-        if (isMaskedOrInvalidSecret(settings.oauthClientSecret)) {
-          return ctx.response.json({
-            success: false,
-            message:
-              'OAuth client secret in YouTrack settings looks invalid (' +
-              maskSecret(settings.oauthClientSecret) +
-              '). YouTrack secret fields often save the ***** UI mask. ' +
-              'Re-upload the app if needed, then paste the full Keycloak client secret into the plain-text OAuth client secret field and save.',
-          });
-        }
-
         const code = String(body.code);
         const codeVerifier = String(body.code_verifier);
         const debug = {
-          authMethod: 'client_secret_post',
+          authMethod: 'client_secret_basic',
           tokenUrl: settings.oauthTokenUrl,
           clientId: settings.oauthClientId,
-          clientSecret: maskSecret(settings.oauthClientSecret),
+          clientSecret: '(youtrack-secret)',
           redirectUri: redirectUri,
           codeLen: code.length,
           codePrefix: code.substring(0, 8),
@@ -653,10 +620,10 @@ exports.httpHandler = {
         }
 
         const debug = {
-          authMethod: 'client_secret_post',
+          authMethod: 'client_secret_basic',
           tokenUrl: settings.oauthTokenUrl,
           clientId: settings.oauthClientId,
-          clientSecret: maskSecret(settings.oauthClientSecret),
+          clientSecret: '(youtrack-secret)',
           grantType: 'refresh_token',
         };
         const serviceResponse = exchangeToken(settings, {

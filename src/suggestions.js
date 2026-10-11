@@ -21,7 +21,8 @@ function requireSettings(ctx) {
   return {
     phonemosBaseUrl: trimTrailingSlash(s.phonemosBaseUrl),
     oauthClientId: trimSetting(s.oauthClientId),
-    oauthClientSecret: trimSetting(s.oauthClientSecret),
+    // Do not trim/stringify — YouTrack secret settings must be passed through to http.basicAuth.
+    oauthClientSecret: s.oauthClientSecret,
     oauthAuthorizationUrl: trimSetting(s.oauthAuthorizationUrl),
     oauthTokenUrl: trimSetting(s.oauthTokenUrl),
     oauthRedirectUri: trimSetting(s.oauthRedirectUri),

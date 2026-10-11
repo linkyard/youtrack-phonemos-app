@@ -95,11 +95,11 @@ function exchangeRefreshToken(settings, refreshToken) {
   const origin = slash === -1 ? tokenUrl : tokenUrl.substring(0, slash);
   const path = slash === -1 ? '/' : tokenUrl.substring(slash);
 
+  // Same as backend exchangeToken: secret via basicAuth only (YouTrack secret setting).
   const fields = {
     grant_type: 'refresh_token',
     refresh_token: refreshToken,
     client_id: settings.oauthClientId,
-    client_secret: settings.oauthClientSecret,
   };
   const bodyParts = [];
   Object.keys(fields).forEach(function (key) {
@@ -109,6 +109,7 @@ function exchangeRefreshToken(settings, refreshToken) {
   });
 
   const connection = new http.Connection(origin);
+  connection.basicAuth(settings.oauthClientId, settings.oauthClientSecret);
   connection.addHeader('Content-Type', 'application/x-www-form-urlencoded');
   connection.addHeader('Accept', 'application/json');
   return connection.postSync(path, null, bodyParts.join('&'));
@@ -138,7 +139,7 @@ function ensureAccessToken(ctx, settings) {
     };
   }
 
-  if (!settings.oauthClientId || !settings.oauthClientSecret || !settings.oauthTokenUrl) {
+  if (!settings.oauthClientId || settings.oauthClientSecret == null || !settings.oauthTokenUrl) {
     return {
       ok: false,
       reason: 'misconfigured',
