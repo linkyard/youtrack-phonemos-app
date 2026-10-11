@@ -40,7 +40,7 @@ npm run pack
 | Phonemos base URL | Global | e.g. `https://wiki.example.com` |
 | OAuth client ID / secret | Global | Confidential Keycloak client |
 | OAuth authorization / token URLs | Global | Keycloak OIDC endpoints |
-| OAuth redirect URI | Global | URL of this app’s **Phonemos sign-in** page (see below) |
+| OAuth redirect URI | Global | Optional fallback; prefer the appResources popup callback URL (see below) |
 | Phonemos search root object ID | Project | Site or topic UUID passed as `within` to search |
 | Max suggestions | Project | Default 5 |
 

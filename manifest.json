@@ -28,7 +28,7 @@
       "indexPath": "oauth-callback/index.html",
       "extensionPoint": "MAIN_MENU_ITEM",
       "iconPath": "oauth-callback/widget-icon.png",
-      "description": "OAuth redirect target for Phonemos sign-in",
+      "description": "Phonemos connection status and Helpdesk KB entry point",
       "showHeader": false
     }
   ]
