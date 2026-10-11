@@ -55,16 +55,20 @@ function storePendingResult(ctx, state, code, error) {
   return true;
 }
 
+function trimSetting(value) {
+  return value == null ? value : String(value).trim();
+}
+
 function requireSettings(ctx) {
   const s = ctx.settings || {};
   return {
     phonemosBaseUrl: trimTrailingSlash(s.phonemosBaseUrl),
-    oauthClientId: s.oauthClientId,
-    oauthClientSecret: s.oauthClientSecret,
-    oauthAuthorizationUrl: s.oauthAuthorizationUrl,
-    oauthTokenUrl: s.oauthTokenUrl,
-    oauthRedirectUri: s.oauthRedirectUri,
-    withinObjectId: s.withinObjectId,
+    oauthClientId: trimSetting(s.oauthClientId),
+    oauthClientSecret: trimSetting(s.oauthClientSecret),
+    oauthAuthorizationUrl: trimSetting(s.oauthAuthorizationUrl),
+    oauthTokenUrl: trimSetting(s.oauthTokenUrl),
+    oauthRedirectUri: trimSetting(s.oauthRedirectUri),
+    withinObjectId: trimSetting(s.withinObjectId),
     searchLimit: s.searchLimit,
   };
 }
@@ -83,38 +87,49 @@ function parseJsonSafe(response) {
   }
 }
 
-function bytesToBase64(bytes) {
-  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
-  let out = '';
-  for (let i = 0; i < bytes.length; i += 3) {
-    const a = bytes[i];
-    const b = i + 1 < bytes.length ? bytes[i + 1] : 0;
-    const c = i + 2 < bytes.length ? bytes[i + 2] : 0;
-    out += chars[a >> 2];
-    out += chars[((a & 3) << 4) | (b >> 4)];
-    out += i + 1 < bytes.length ? chars[((b & 15) << 2) | (c >> 6)] : '=';
-    out += i + 2 < bytes.length ? chars[c & 63] : '=';
+function maskSecret(value) {
+  const s = value == null ? '' : String(value);
+  if (!s) {
+    return '(empty)';
   }
-  return out;
+  if (/^\*+$/.test(s)) {
+    return '(LOOKS LIKE UI MASK "' + s + '" — re-paste the real Keycloak secret; len=' + s.length + ')';
+  }
+  if (s.length <= 6) {
+    return '(len=' + s.length + ', suspiciously short for a Keycloak secret)';
+  }
+  return s.substring(0, 2) + '…' + s.substring(s.length - 2) + ' (len=' + s.length + ')';
 }
 
-function stringToUtf8Bytes(str) {
-  const bytes = [];
-  for (let i = 0; i < str.length; i++) {
-    let code = str.charCodeAt(i);
-    if (code < 0x80) {
-      bytes.push(code);
-    } else if (code < 0x800) {
-      bytes.push(0xc0 | (code >> 6), 0x80 | (code & 0x3f));
-    } else {
-      bytes.push(0xe0 | (code >> 12), 0x80 | ((code >> 6) & 0x3f), 0x80 | (code & 0x3f));
+function isMaskedOrInvalidSecret(value) {
+  const s = value == null ? '' : String(value).trim();
+  return !s || s.length < 8 || /^\*+$/.test(s);
+}
+
+function describeHttpResponse(serviceResponse) {
+  if (!serviceResponse) {
+    return {status: 'null', bodyPreview: ''};
+  }
+  let raw = '';
+  try {
+    if (serviceResponse.body != null) {
+      raw = String(serviceResponse.body);
+    } else if (serviceResponse.response != null) {
+      raw = String(serviceResponse.response);
+    } else if (typeof serviceResponse.toString === 'function') {
+      raw = String(serviceResponse.toString());
     }
+  } catch (e) {
+    raw = '';
   }
-  return bytes;
-}
-
-function basicAuthHeader(clientId, clientSecret) {
-  return 'Basic ' + bytesToBase64(stringToUtf8Bytes(clientId + ':' + clientSecret));
+  const data = parseJsonSafe(serviceResponse);
+  return {
+    status: serviceResponse.code,
+    isSuccess: !!serviceResponse.isSuccess,
+    error: data && data.error ? String(data.error) : '',
+    errorDescription: data && data.error_description ? String(data.error_description) : '',
+    bodyPreview: raw ? raw.substring(0, 500) : data ? JSON.stringify(data).substring(0, 500) : '',
+  };
 }
 
 function exchangeToken(settings, formFields) {
@@ -123,7 +138,8 @@ function exchangeToken(settings, formFields) {
   const origin = slash === -1 ? tokenUrl : tokenUrl.substring(0, slash);
   const path = slash === -1 ? '/' : tokenUrl.substring(slash);
 
-  // Keycloak accepts client_secret_post; also send Basic for clients that require it.
+  // Use client_secret_post only. Sending a bad Basic header alongside the body
+  // makes Keycloak ignore the body credentials and return invalid_client.
   const fields = Object.assign({}, formFields, {
     client_id: settings.oauthClientId,
     client_secret: settings.oauthClientSecret,
@@ -138,29 +154,45 @@ function exchangeToken(settings, formFields) {
 
   const connection = new http.Connection(origin);
   connection.addHeader('Content-Type', 'application/x-www-form-urlencoded');
-  connection.addHeader('Authorization', basicAuthHeader(settings.oauthClientId, settings.oauthClientSecret));
   connection.addHeader('Accept', 'application/json');
   return connection.postSync(path, null, bodyParts.join('&'));
 }
 
-function mapTokenResponse(serviceResponse) {
+function mapTokenResponse(serviceResponse, debug) {
+  const httpInfo = describeHttpResponse(serviceResponse);
   if (!serviceResponse || !serviceResponse.isSuccess) {
-    const data = serviceResponse ? parseJsonSafe(serviceResponse) : null;
-    const detail =
-      (data && (data.error_description || data.error)) ||
-      (serviceResponse && serviceResponse.response) ||
-      '';
+    const detail = httpInfo.errorDescription || httpInfo.error || httpInfo.bodyPreview || '';
     return {
       success: false,
       message:
         'Token endpoint returned status ' +
-        (serviceResponse ? serviceResponse.code : 'unknown') +
-        (detail ? ': ' + String(detail).substring(0, 300) : '.'),
+        httpInfo.status +
+        (detail ? ': ' + detail : '.') +
+        '\nDebug: ' +
+        JSON.stringify(
+          Object.assign({}, debug || {}, {
+            httpStatus: httpInfo.status,
+            httpSuccess: httpInfo.isSuccess,
+            keycloakError: httpInfo.error || null,
+            keycloakErrorDescription: httpInfo.errorDescription || null,
+            responseBodyPreview: httpInfo.bodyPreview || null,
+          }),
+        ),
     };
   }
   const data = parseJsonSafe(serviceResponse);
   if (!data || !data.access_token) {
-    return {success: false, message: 'Token endpoint did not return an access token.'};
+    return {
+      success: false,
+      message:
+        'Token endpoint did not return an access token.\nDebug: ' +
+        JSON.stringify(
+          Object.assign({}, debug || {}, {
+            httpStatus: httpInfo.status,
+            responseBodyPreview: httpInfo.bodyPreview || null,
+          }),
+        ),
+    };
   }
   return {
     success: true,
@@ -343,14 +375,37 @@ exports.httpHandler = {
             message: 'redirect_uri is required.',
           });
         }
+        if (isMaskedOrInvalidSecret(settings.oauthClientSecret)) {
+          return ctx.response.json({
+            success: false,
+            message:
+              'OAuth client secret in YouTrack settings looks invalid (' +
+              maskSecret(settings.oauthClientSecret) +
+              '). YouTrack secret fields often save the ***** UI mask. ' +
+              'Re-upload the app if needed, then paste the full Keycloak client secret into the plain-text OAuth client secret field and save.',
+          });
+        }
 
+        const code = String(body.code);
+        const codeVerifier = String(body.code_verifier);
+        const debug = {
+          authMethod: 'client_secret_post',
+          tokenUrl: settings.oauthTokenUrl,
+          clientId: settings.oauthClientId,
+          clientSecret: maskSecret(settings.oauthClientSecret),
+          redirectUri: redirectUri,
+          codeLen: code.length,
+          codePrefix: code.substring(0, 8),
+          codeVerifierLen: codeVerifier.length,
+          grantType: 'authorization_code',
+        };
         const serviceResponse = exchangeToken(settings, {
           grant_type: 'authorization_code',
-          code: body.code,
+          code: code,
           redirect_uri: redirectUri,
-          code_verifier: body.code_verifier,
+          code_verifier: codeVerifier,
         });
-        return ctx.response.json(mapTokenResponse(serviceResponse));
+        return ctx.response.json(mapTokenResponse(serviceResponse, debug));
       },
     },
     {
@@ -379,11 +434,18 @@ exports.httpHandler = {
           });
         }
 
+        const debug = {
+          authMethod: 'client_secret_post',
+          tokenUrl: settings.oauthTokenUrl,
+          clientId: settings.oauthClientId,
+          clientSecret: maskSecret(settings.oauthClientSecret),
+          grantType: 'refresh_token',
+        };
         const serviceResponse = exchangeToken(settings, {
           grant_type: 'refresh_token',
           refresh_token: body.refreshToken,
         });
-        return ctx.response.json(mapTokenResponse(serviceResponse));
+        return ctx.response.json(mapTokenResponse(serviceResponse, debug));
       },
     },
   ],

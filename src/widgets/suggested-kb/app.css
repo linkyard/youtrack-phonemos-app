@@ -47,6 +47,9 @@
 .error {
   margin: 0;
   color: var(--ring-error-color);
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-size: var(--ring-font-size-smaller);
 }
 
 .list {

@@ -20,9 +20,9 @@
     },
     "oauthClientSecret": {
       "title": "OAuth client secret",
-      "description": "Confidential Keycloak client secret",
+      "description": "Confidential Keycloak client secret (full value). Do not use the secret input type — YouTrack may persist the ***** mask (5 chars) instead of the real secret.",
       "type": "string",
-      "format": "secret",
+      "minLength": 8,
       "x-scope": "GLOBAL"
     },
     "oauthAuthorizationUrl": {

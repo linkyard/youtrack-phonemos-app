@@ -58,6 +58,8 @@ npm run pack
 3. Scopes: at least `openid`.
 4. Put client id/secret and the auth/token URLs into the YouTrack app settings. **OAuth redirect URI** is an optional fallback; the widget prefers the derived `appResources` URL.
 
+   Paste the **full** Keycloak client secret. If YouTrack ever shows only `*****` and token exchange fails with `unauthorized_client`, the mask was saved instead of the secret — clear the field, paste again, save once, and avoid re-saving settings without re-pasting the secret.
+
 The callback HTML returns the authorization code to the ticket widget via `postMessage` / `window.name`.
 
 ### Search
