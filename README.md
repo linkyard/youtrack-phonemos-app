@@ -6,7 +6,7 @@ Suggests Phonemos knowledge base articles on YouTrack Helpdesk tickets, and lets
 
 - **Suggested knowledge base articles** widget under the ticket description (`ISSUE_ABOVE_ACTIVITY_STREAM`)
 - Hybrid Phonemos search over ticket summary, description, and the latest comment from the reporter
-- **Phonemos search** main-menu page: connection status and search across the whole site the signed-in user can access
+- **Phonemos search** main-menu page: connection status and search across the whole site the connected user can access
 - Per-user OAuth2 against the Phonemos Keycloak IdP (no shared service-account token)
 - **Disconnect** on the ticket widget and the menu page (revokes the Keycloak refresh token when it can)
 
@@ -103,9 +103,9 @@ The **Phonemos search** main-menu page searches the whole site. It resolves the 
 4. Pending authorization codes are handed out once via `POST oauth/pending` (consumed). Disconnect, and a Phonemos 401, revoke the Keycloak refresh token when possible.
 5. Ticket suggestions and menu search use the **server-stored** access token for the current YouTrack user (the widget never sends a Bearer token). Phonemos still enforces that user’s permissions. Refresh sends the stored refresh token to the Keycloak token endpoint. `invalid_grant` clears the local session; a timeout or token-endpoint 5xx leaves it in place.
 
-OAuth endpoints reject guest users and rate-limit sign-in attempts per YouTrack user.
+OAuth endpoints reject guest users and rate-limit connection attempts per YouTrack user.
 
-Shared SSO (YouTrack and Phonemos on the same Keycloak) makes reconnects nearly silent; otherwise users sign in to Phonemos once per browser session.
+Shared SSO (YouTrack and Phonemos on the same Keycloak) makes reconnects nearly silent; otherwise users would need to connect to Phonemos once per browser session.
 
 ## Optional CLI upload
 

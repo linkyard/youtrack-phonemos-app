@@ -122,7 +122,6 @@ const AppComponent: React.FunctionComponent = () => {
     try {
       await clearPhonemosSession(host);
     } catch {
-      // Still treat as signed out locally.
     }
     setStatus('needs-auth');
   }, []);
@@ -151,7 +150,7 @@ const AppComponent: React.FunctionComponent = () => {
       {status === 'needs-auth' && (
         <div className="stack">
           <p className="muted">
-            {error || 'Sign in to Phonemos to see articles you can access for this ticket.'}
+            {error || 'Connect to Phonemos to see articles you can access for this ticket.'}
           </p>
           <Button primary onClick={() => void onConnect()}>
             Connect to Phonemos

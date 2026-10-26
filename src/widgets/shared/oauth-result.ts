@@ -315,13 +315,13 @@ export function waitForOAuthResult(
       }
       if (closedGrace == null) {
         closedGrace = window.setTimeout(() => {
-          settle(() => reject(new Error('Phonemos sign-in was cancelled.')));
+          settle(() => reject(new Error('Phonemos connection was cancelled.')));
         }, 4000);
       }
     }, 200);
 
     const timeout = window.setTimeout(() => {
-      settle(() => reject(new Error('Phonemos sign-in timed out.')));
+      settle(() => reject(new Error('Phonemos connection timed out.')));
     }, 5 * 60 * 1000);
 
     const cleanup = () => {

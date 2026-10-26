@@ -2,7 +2,7 @@
 <html lang="en">
   <head>
     <meta charset="utf-8" />
-    <title>Phonemos sign-in</title>
+    <title>Phonemos connect</title>
     <style>
       body {
         font-family: system-ui, sans-serif;
@@ -20,11 +20,11 @@
   </head>
   <body>
     <h1>Phonemos</h1>
-    <p id="msg">Completing sign-in…</p>
+    <p id="msg">Connecting…</p>
     <script>
       (function () {
         var MESSAGE_TYPE = 'phonemos:oauth';
-        var APP_NAME = 'phonemos';
+        var ACK_TYPE = 'phonemos:oauth-ack';
         var params = new URLSearchParams(window.location.search);
         if (!params.get('code') && !params.get('error') && window.location.hash) {
           var hash = window.location.hash.charAt(0) === '#' ? window.location.hash.slice(1) : window.location.hash;
@@ -49,87 +49,63 @@
           ts: Date.now(),
         };
 
+        // YouTrack widgets run in about:srcdoc (opaque origin). A concrete
+        // targetOrigin never matches, so the opener must be addressed with '*'.
+        // The opener still requires event.source === this popup and matching state.
+        var opener = window.opener || (window.top && window.top.opener) || null;
+        var acked = false;
+
         function notifyOpener() {
           try {
             window.name = 'phonemos-oauth:' + JSON.stringify(payload);
           } catch (e) {}
-          // YouTrack widgets run in about:srcdoc (opaque origin). A concrete
-          // targetOrigin never matches, so the opener must be addressed with '*'.
-          // The opener still requires event.source === this popup and matching state.
           try {
-            var opener = window.opener || (window.top && window.top.opener) || null;
             if (opener) {
               opener.postMessage(payload, '*');
             }
           } catch (e) {}
         }
 
-        function closeSoon() {
-          setTimeout(function () {
-            try {
-              window.close();
-            } catch (e) {}
-          }, 800);
+        function closeNow() {
+          try {
+            window.close();
+          } catch (e) {}
         }
 
-        // Tell the widget immediately — do not navigate to about:blank (empty hang,
-        // and srcdoc still cannot read window.name across origins).
+        // Retry until the opener explicitly acknowledges receipt — don't guess a
+        // delay/retry count. Whichever channel it actually caught us on (postMessage,
+        // window.name poll, or the oauth/pending poll), it tells us so here, and only
+        // then do we close. The timeout below is just a safety net in case the opener
+        // never shows up at all (e.g. the widget was closed or crashed).
+        var retryTimer = setInterval(notifyOpener, 400);
         notifyOpener();
-        setTimeout(notifyOpener, 200);
-        setTimeout(notifyOpener, 500);
 
-        var completeUrl =
-          window.location.origin +
-          '/api/extensionEndpoints/' +
-          encodeURIComponent(APP_NAME) +
-          '/backend/oauth/complete';
+        window.addEventListener('message', function (event) {
+          var data = event.data;
+          if (acked || !data || data.type !== ACK_TYPE || data.state !== state) {
+            return;
+          }
+          if (opener && event.source !== opener) {
+            return;
+          }
+          acked = true;
+          clearInterval(retryTimer);
+          closeNow();
+        });
 
-        msg.textContent = 'Finishing sign-in…';
-        fetch(completeUrl, {
-          method: 'POST',
-          credentials: 'same-origin',
-          headers: {
-            Accept: 'application/json',
-            'Content-Type': 'application/json',
-            'X-Requested-With': 'XMLHttpRequest',
-          },
-          body: JSON.stringify({
-            code: code,
-            state: state,
-            error: error,
-          }),
-        })
-          .then(function (response) {
-            return response
-              .json()
-              .catch(function () {
-                return {success: false, message: 'HTTP ' + response.status};
-              })
-              .then(function (data) {
-                return {ok: response.ok, data: data || {}};
-              });
-          })
-          .then(function (result) {
-            notifyOpener();
-            if (error) {
-              msg.textContent = 'Sign-in failed: ' + error;
-            } else if (result.data && result.data.connected) {
-              msg.textContent = 'Signed in. You can close this window.';
-            } else {
-              msg.textContent =
-                'Returning to YouTrack… ' +
-                ((result.data && result.data.message) || '');
-            }
-            closeSoon();
-          })
-          .catch(function (e) {
-            notifyOpener();
-            msg.textContent =
-              'Returning to YouTrack… (' +
-              (e && e.message ? e.message : 'network error') +
-              ')';
-            closeSoon();
-          });
+        setTimeout(function () {
+          if (acked) {
+            return;
+          }
+          clearInterval(retryTimer);
+          closeNow();
+        }, 60000);
+
+        if (error) {
+          msg.textContent = 'Connection failed: ' + error;
+        } else {
+          msg.textContent = 'Connected. You can close this window.';
+        }
       })();
     </script>
   </body>

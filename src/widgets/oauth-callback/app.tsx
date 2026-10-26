@@ -256,7 +256,7 @@ const AppComponent: React.FunctionComponent = () => {
         )}
         {!connected && (
           <p className="hint banner-hint">
-            Sign-in from a ticket also works. Keycloak must allow the appResources popup callback URL
+            Connecting from a ticket also works. Keycloak must allow the appResources popup callback URL
             shown under Connect on the ticket widget — not this menu page URL.
           </p>
         )}

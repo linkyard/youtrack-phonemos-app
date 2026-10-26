@@ -140,7 +140,6 @@ export async function loadPhonemosSession(host: HostAPI): Promise<PhonemosSessio
       return session;
     }
   } catch {
-    // Fall through — treat as signed out.
   }
 
   memorySession = null;
@@ -386,7 +385,7 @@ export async function connectPhonemos(host: HostAPI): Promise<PhonemosSession> {
     if (!authorize.success || !authorize.url) {
       throw new Error(
         [
-          authorize.message || 'Unable to start Phonemos sign-in.',
+          authorize.message || 'Unable to start Phonemos connection.',
           ...debug,
           `authorizeSuccess=${String(authorize.success)}`,
         ].join('\n'),

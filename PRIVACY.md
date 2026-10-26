@@ -23,7 +23,7 @@ The app runs inside YouTrack. It does not run on a linkyard or Phonemos server, 
 
 After a user chooses **Connect to Phonemos** on a ticket, or **Connect** on the Phonemos search menu item, the app does the following.
 
-**Sign-in.** The app starts an OAuth 2.0 authorisation-code flow with PKCE against the Keycloak identity provider configured by the YouTrack administrator. YouTrack stores, for that user, the access token, the refresh token if one is issued, and the expiry time. The access token is sent only to the configured Phonemos site, as that user. The refresh token is sent only to the configured Keycloak token endpoint: to refresh the session, and on disconnect to the revocation URL derived from that endpoint (`…/token` becomes `…/revoke`) when that URL can be derived. Disconnecting removes the stored tokens either way.
+**Connection.** The app starts an OAuth 2.0 authorisation-code flow with PKCE against the Keycloak identity provider configured by the YouTrack administrator. YouTrack stores, for that user, the access token, the refresh token if one is issued, and the expiry time. The access token is sent only to the configured Phonemos site, as that user. The refresh token is sent only to the configured Keycloak token endpoint: to refresh the session, and on disconnect to the revocation URL derived from that endpoint (`…/token` becomes `…/revoke`) when that URL can be derived. Disconnecting removes the stored tokens either way.
 
 **Ticket search.** While the user is connected, opening a ticket sends search queries to the configured Phonemos site. Queries are built from that ticket’s summary, a title search (`#` plus the summary), and the summary together with the description and the latest comment written by the reporter. Markup is stripped. Each query is limited to 3500 characters. The request also includes the configured search-root object and the project result limit. Phonemos applies that user’s own permissions and returns matching pages (title, extract, and link). The app does not write those results back to Phonemos.
 
@@ -35,7 +35,7 @@ The app does not sell personal data and does not use ticket content or search qu
 
 Where the customer is the controller, the customer determines the legal basis for using the app on its YouTrack site. Typical bases are Art. 6 (1) (b) GDPR (performance of a contract with the people whose tickets are handled) and Art. 6 (1) (f) GDPR (legitimate interest in resolving requests with the existing knowledge base).
 
-Sign-in is started by the user. The app does not search Phonemos until that user has connected.
+Connection is started by the user. The app does not search Phonemos until that user has connected.
 
 ## 4 Recipients and transfers
 
