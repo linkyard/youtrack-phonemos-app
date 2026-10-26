@@ -1,5 +1,6 @@
 import React, {memo, useCallback, useEffect, useState} from 'react';
 import Button from '@jetbrains/ring-ui-built/components/button/button';
+import Dialog from '@jetbrains/ring-ui-built/components/dialog/dialog';
 import Input from '@jetbrains/ring-ui-built/components/input/input';
 import Link from '@jetbrains/ring-ui-built/components/link/link';
 import LoaderInline from '@jetbrains/ring-ui-built/components/loader-inline/loader-inline';
@@ -9,6 +10,7 @@ import {
   connectPhonemos,
   ensurePhonemosTokens,
   formatUnknownError,
+  PhonemosConnectionError,
 } from '../suggested-kb/oauth';
 
 import phonemosLogo from './phonemos-logo-full.svg?url';
@@ -40,6 +42,8 @@ const AppComponent: React.FunctionComponent = () => {
   const [searched, setSearched] = useState(false);
   const [hits, setHits] = useState<SearchHit[]>([]);
   const [searchError, setSearchError] = useState<string | null>(null);
+  const [errorDetails, setErrorDetails] = useState<string | null>(null);
+  const [showErrorDetails, setShowErrorDetails] = useState(false);
 
   const refreshConnection = useCallback(async (api: Awaited<ReturnType<typeof YTApp.register>>) => {
     const session = await ensurePhonemosTokens(api);
@@ -85,13 +89,19 @@ const AppComponent: React.FunctionComponent = () => {
     }
     setBusy(true);
     setMessage('');
+    setErrorDetails(null);
     try {
       await connectPhonemos(host);
       await refreshConnection(host);
       setMode('home');
     } catch (e) {
       setMode('error');
-      setMessage(formatUnknownError(e));
+      if (e instanceof PhonemosConnectionError) {
+        setMessage(e.message);
+        setErrorDetails(e.details);
+      } else {
+        setMessage(formatUnknownError(e));
+      }
     } finally {
       setBusy(false);
     }
@@ -108,6 +118,7 @@ const AppComponent: React.FunctionComponent = () => {
       setHits([]);
       setSearched(false);
       setSearchError(null);
+      setErrorDetails(null);
       setMode('home');
       setMessage('');
     } catch (e) {
@@ -218,7 +229,31 @@ const AppComponent: React.FunctionComponent = () => {
       <div className="shell">
         {brandHero}
 
-        {mode === 'error' && message ? <p className="error banner-error">{message}</p> : null}
+        {mode === 'error' && message ? (
+          <div className="error-row banner-error">
+            <p className="error">{message}</p>
+            {errorDetails && (
+              <Button text onClick={() => setShowErrorDetails(true)}>
+                Details
+              </Button>
+            )}
+          </div>
+        ) : null}
+
+        {errorDetails && (
+          <Dialog
+            show={showErrorDetails}
+            label="Connection error details"
+            showCloseButton
+            onCloseClick={() => setShowErrorDetails(false)}
+            onCloseAttempt={() => setShowErrorDetails(false)}
+            onOverlayClick={() => setShowErrorDetails(false)}
+            onEscPress={() => setShowErrorDetails(false)}
+          >
+            <div className="error-details-header">Connection error details</div>
+            <pre className="error-details">{errorDetails}</pre>
+          </Dialog>
+        )}
         {!connected && (
           <p className="hint banner-hint">
             Sign-in from a ticket also works. Keycloak must allow the appResources popup callback URL

@@ -262,7 +262,7 @@ function consumeOAuthRateLimit(ctx) {
   if (count > OAUTH_RATE_MAX) {
     return {
       ok: false,
-      message: 'Too many Phonemos sign-in attempts. Try again in a few minutes.',
+      message: 'Too many Phonemos connection attempts. Try again in a few minutes.',
     };
   }
   return {ok: true};

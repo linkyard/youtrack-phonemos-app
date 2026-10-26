@@ -2,6 +2,7 @@ import React, {memo, useCallback, useEffect, useState} from 'react';
 import Button from '@jetbrains/ring-ui-built/components/button/button';
 import LoaderInline from '@jetbrains/ring-ui-built/components/loader-inline/loader-inline';
 import Link from '@jetbrains/ring-ui-built/components/link/link';
+import Dialog from '@jetbrains/ring-ui-built/components/dialog/dialog';
 
 import {
   clearPhonemosSession,
@@ -9,6 +10,7 @@ import {
   ensurePhonemosTokens,
   formatUnknownError,
   getRedirectDebugInfo,
+  PhonemosConnectionError,
   resolveOAuthRedirectUri,
 } from './oauth';
 
@@ -44,11 +46,14 @@ const AppComponent: React.FunctionComponent = () => {
   const [connected, setConnected] = useState(false);
   const [items, setItems] = useState<SuggestionItem[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [errorDetails, setErrorDetails] = useState<string | null>(null);
+  const [showErrorDetails, setShowErrorDetails] = useState(false);
   const [mode, setMode] = useState<string | null>(null);
 
   const loadSuggestions = useCallback(async () => {
     setStatus('loading');
     setError(null);
+    setErrorDetails(null);
     try {
       // Ensure a server-side session exists; tokens never enter the widget.
       const session = await ensurePhonemosTokens(host);
@@ -92,17 +97,25 @@ const AppComponent: React.FunctionComponent = () => {
   const onConnect = useCallback(async () => {
     setStatus('loading');
     setError(null);
+    setErrorDetails(null);
     try {
       await connectPhonemos(host);
       await loadSuggestions();
     } catch (e) {
-      setError(formatUnknownError(e));
+      if (e instanceof PhonemosConnectionError) {
+        setError(e.message);
+        setErrorDetails(e.details);
+      } else {
+        setError(formatUnknownError(e));
+        setErrorDetails(null);
+      }
       setStatus('error');
     }
   }, [loadSuggestions]);
 
   const onDisconnect = useCallback(async () => {
     setError(null);
+    setErrorDetails(null);
     setItems([]);
     setMode(null);
     setConnected(false);
@@ -158,12 +171,34 @@ const AppComponent: React.FunctionComponent = () => {
 
       {status === 'error' && (
         <div className="stack">
-          <p className="error">{error}</p>
+          <div className="error-row">
+            <p className="error">{error}</p>
+            {errorDetails && (
+              <Button text onClick={() => setShowErrorDetails(true)}>
+                Details
+              </Button>
+            )}
+          </div>
           <div className="row">
             <Button onClick={() => void loadSuggestions()}>Retry</Button>
             <Button onClick={() => void onConnect()}>Connect to Phonemos</Button>
           </div>
         </div>
+      )}
+
+      {errorDetails && (
+        <Dialog
+          show={showErrorDetails}
+          label="Connection error details"
+          showCloseButton
+          onCloseClick={() => setShowErrorDetails(false)}
+          onCloseAttempt={() => setShowErrorDetails(false)}
+          onOverlayClick={() => setShowErrorDetails(false)}
+          onEscPress={() => setShowErrorDetails(false)}
+        >
+          <div className="error-details-header">Connection error details</div>
+          <pre className="error-details">{errorDetails}</pre>
+        </Dialog>
       )}
 
       {status === 'ready' && (

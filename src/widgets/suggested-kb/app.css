@@ -59,6 +59,29 @@
   font-size: var(--ring-font-size-smaller);
 }
 
+.error-row {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: calc(var(--ring-unit) / 2);
+}
+
+.error-details-header {
+  padding: var(--ring-unit) var(--ring-unit) 0;
+  font-weight: var(--ring-font-weight-bold);
+}
+
+.error-details {
+  max-width: 480px;
+  max-height: 60vh;
+  margin: 0;
+  padding: var(--ring-unit);
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-size: var(--ring-font-size-smaller);
+}
+
 .list {
   list-style: none;
   margin: 0;

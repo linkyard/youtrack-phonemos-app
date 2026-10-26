@@ -1,4 +1,4 @@
-import {clearPublishedOAuthResult, waitForOAuthResult} from '../shared/oauth-result';
+import {clearPublishedOAuthResult, publishOAuthResult, waitForOAuthResult} from '../shared/oauth-result';
 import {deriveOAuthCallbackUrl, getRedirectDebugInfo, resolveOAuthRedirectUri} from '../shared/redirect-uri';
 
 type HostAPI = Awaited<ReturnType<typeof YTApp.register>>;
@@ -224,6 +224,36 @@ function errorText(error: unknown): string {
   return formatUnknownError(error);
 }
 
+/** Just the plain message, no name=/stack/JSON dump — for short, user-facing summaries. */
+function shortErrorMessage(error: unknown): string {
+  if (error == null) {
+    return String(error);
+  }
+  if (typeof error === 'string') {
+    return error;
+  }
+  const value = error as Record<string, unknown>;
+  if (typeof value.message === 'string' && value.message) {
+    return value.message;
+  }
+  return formatUnknownError(error);
+}
+
+/**
+ * Thrown by connectPhonemos on failure. `message` is a short, concatenated summary
+ * fit for inline display; `details` is the full diagnostic dump (stacks, per-path
+ * errors, session snapshot, redirect debug info) for a "show details" view.
+ */
+export class PhonemosConnectionError extends Error {
+  details: string;
+
+  constructor(message: string, details: string) {
+    super(message);
+    this.name = 'PhonemosConnectionError';
+    this.details = details;
+  }
+}
+
 async function fetchAppOrThrow<T>(
   host: HostAPI,
   path: string,
@@ -384,7 +414,7 @@ export async function connectPhonemos(host: HostAPI): Promise<PhonemosSession> {
     // Primary: popup calls oauth/complete and writes the session (survives widget remount).
     // Secondary: if this frame stays alive, finish via authorization code.
     let settled = false;
-    const pathErrors: {path: string; error: string}[] = [];
+    const pathErrors: {path: string; error: unknown}[] = [];
 
     const viaSession = waitForSession(host, popup).then((session) => {
       settled = true;
@@ -394,6 +424,12 @@ export async function connectPhonemos(host: HostAPI): Promise<PhonemosSession> {
     const viaCode = (async () => {
       const code = await waitForOAuthResult(host, state, popup);
       pushDebug(`codePath: got code len=${String(code).length}`);
+      // Best-effort: the popup can never reach oauth/complete itself (served from a
+      // sandboxed, opaque-origin appResources host — fetch() from there can't satisfy
+      // CORS or carry the SameSite=Lax session cookie). host.fetchApp goes through the
+      // trusted YouTrack bridge instead, so do it here to persist the session early —
+      // survives a widget remount even if the oauth/token exchange below never runs.
+      void publishOAuthResult(host, {code, state, error: null});
       if (settled) {
         const session = await fetchSession(host);
         if (!session) {
@@ -427,7 +463,7 @@ export async function connectPhonemos(host: HostAPI): Promise<PhonemosSession> {
       return await new Promise<PhonemosSession>((resolve, reject) => {
         let failures = 0;
         const onFail = (path: string, error: unknown) => {
-          pathErrors.push({path, error: formatUnknownError(error)});
+          pathErrors.push({path, error});
           failures += 1;
           if (!settled && failures >= 2) {
             reject(new Error('both OAuth completion paths failed'));
@@ -447,24 +483,29 @@ export async function connectPhonemos(host: HostAPI): Promise<PhonemosSession> {
         sessionSnapshot = `sessionSnapshotError=${formatUnknownError(sessionError)}`;
       }
 
-      throw new Error(
-        [
-          'Phonemos sign-in failed.',
-          formatUnknownError(e),
-          ...pathErrors.map((entry) => `${entry.path}-path error:\n${entry.error}`),
-          sessionSnapshot,
-          `popupClosedAtEnd=${String(popup.closed)}`,
-          ...debug,
-          getRedirectDebugInfo(),
-        ].join('\n\n'),
-      );
+      const summary = Array.from(
+        new Set([shortErrorMessage(e), ...pathErrors.map((entry) => shortErrorMessage(entry.error))].filter(Boolean)),
+      ).join('. ');
+
+      const details = [
+        'Phonemos connection failed.',
+        formatUnknownError(e),
+        ...pathErrors.map((entry) => `${entry.path}-path error:\n${formatUnknownError(entry.error)}`),
+        sessionSnapshot,
+        `popupClosedAtEnd=${String(popup.closed)}`,
+        ...debug,
+        getRedirectDebugInfo(),
+      ].join('\n\n');
+
+      throw new PhonemosConnectionError(summary || 'Phonemos connection failed.', details);
     }
   } catch (e) {
-    if (e instanceof Error && e.message.startsWith('Phonemos sign-in failed.')) {
+    if (e instanceof PhonemosConnectionError) {
       throw e;
     }
-    throw new Error(
-      ['Phonemos sign-in failed.', formatUnknownError(e), ...debug, getRedirectDebugInfo()].join('\n\n'),
+    throw new PhonemosConnectionError(
+      shortErrorMessage(e),
+      ['Phonemos connection failed.', formatUnknownError(e), ...debug, getRedirectDebugInfo()].join('\n\n'),
     );
   }
 }

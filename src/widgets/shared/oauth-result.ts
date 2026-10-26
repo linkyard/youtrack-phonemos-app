@@ -1,4 +1,5 @@
 export const OAUTH_RESULT_TYPE = 'phonemos:oauth';
+export const OAUTH_ACK_TYPE = 'phonemos:oauth-ack';
 export const OAUTH_STORAGE_KEY = 'phonemos:oauth-result';
 
 export type OAuthResultPayload = {
@@ -196,11 +197,23 @@ export function waitForOAuthResult(
       fn();
     };
 
+    // The popup retries notifyOpener() on an interval until it hears this back —
+    // tell it to stop as soon as we've recognized its result, on any channel
+    // (postMessage, window.name poll, or oauth/pending poll).
+    const ackPopup = () => {
+      try {
+        popup?.postMessage({type: OAUTH_ACK_TYPE, state: expectedState}, '*');
+      } catch {
+        // ignore
+      }
+    };
+
     const accept = (data: OAuthResultPayload) => {
       // Ignore stale results from earlier attempts — never reject/close on mismatch.
       if (!data.state || data.state !== expectedState) {
         return;
       }
+      ackPopup();
       if (data.error) {
         settle(() => reject(new Error(String(data.error))));
         return;
