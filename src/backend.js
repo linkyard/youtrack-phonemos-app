@@ -162,9 +162,11 @@ function requireSettings(ctx) {
     oauthAuthorizationUrl: trimSetting(s.oauthAuthorizationUrl),
     oauthTokenUrl: trimSetting(s.oauthTokenUrl),
     oauthRedirectUri: trimSetting(s.oauthRedirectUri),
-    // Phonemos validates Hasura claims in the access token; the Keycloak client
+    // Phonemos validates Hasura claims in the access token; the OAuth client
     // must assign the "hasura" client scope (Default) or tokens are rejected.
     oauthScope: trimSetting(s.oauthScope) || 'openid profile email offline_access hasura',
+    oauthVerifyNameMatch: s.oauthVerifyNameMatch !== false,
+    oauthVerifyEmailMatch: s.oauthVerifyEmailMatch !== false,
     withinObjectId: trimSetting(s.withinObjectId),
     searchLimit: s.searchLimit,
   };
@@ -212,7 +214,7 @@ function exchangeToken(settings, formFields) {
 
   // client_secret_basic: send the YouTrack secret setting via basicAuth so it is
   // never readable as a plain string in scripts or responses. Do not also put
-  // client_secret in the body (Keycloak then ignores Basic and fails).
+  // client_secret in the body (OAuth then ignores Basic and fails).
   const fields = Object.assign({}, formFields, {
     client_id: settings.oauthClientId,
   });
@@ -465,8 +467,11 @@ exports.httpHandler = {
         }
         const redirectError = rejectRedirectUri(ctx, settings, login.redirectUri);
         if (redirectError) {
+          // Do not also clearPendingResult here: it was just written earlier in this
+          // same request, and deleting a same-request write in one flush trips Xodus's
+          // ConstraintsValidationException on the PluggedStringAttribute. It expires via
+          // OAUTH_TTL_MS on its own.
           clearLogin(ctx, state);
-          clearPendingResult(ctx, state);
           return ctx.response.json({
             success: false,
             connected: false,
@@ -492,6 +497,20 @@ exports.httpHandler = {
             message: mapped.message || 'Token exchange failed.',
           });
         }
+        const identity = phonemosSession.verifyIdentity(ctx, settings, tokens.accessToken);
+        if (!identity.ok) {
+          // The code was redeemed, but for a different OAuth identity than this
+          // YouTrack user — do not persist it, and do not let the parent retry.
+          phonemosSession.revokeRefreshToken(settings, tokens.refreshToken);
+          // See the redirectError branch above for why clearPendingResult is skipped here.
+          clearLogin(ctx, state);
+          return ctx.response.json({
+            success: false,
+            connected: false,
+            finalized: true,
+            message: identity.message,
+          });
+        }
         if (!writeUserTokens(ctx, tokens)) {
           return ctx.response.json({
             success: false,
@@ -500,8 +519,8 @@ exports.httpHandler = {
             message: 'Unable to store Phonemos session for this YouTrack user.',
           });
         }
+        // See the redirectError branch above for why clearPendingResult is skipped here.
         clearLogin(ctx, state);
-        clearPendingResult(ctx, state);
         return ctx.response.json({success: true, connected: true, finalized: true});
       },
     },
@@ -609,6 +628,15 @@ exports.httpHandler = {
         const mapped = mapTokenResponse(serviceResponse);
         const tokens = tokensFromMappedResponse(mapped);
         if (tokens) {
+          const identity = phonemosSession.verifyIdentity(ctx, settings, tokens.accessToken);
+          if (!identity.ok) {
+            // The code was redeemed, but for a different OAuth identity than this
+            // YouTrack user — do not persist it. Revoke so the leaked code is dead either way.
+            phonemosSession.revokeRefreshToken(settings, tokens.refreshToken);
+            clearLogin(ctx, state);
+            clearPendingResult(ctx, state);
+            return ctx.response.json({success: false, message: identity.message});
+          }
           if (!writeUserTokens(ctx, tokens)) {
             return ctx.response.json({
               success: false,

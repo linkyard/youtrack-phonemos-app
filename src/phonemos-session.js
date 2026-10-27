@@ -32,7 +32,7 @@ function userExtensionProperties(ctx) {
   return user.extensionProperties;
 }
 
-/** Reject guest / missing users before OAuth work that hits Keycloak. */
+/** Reject guest / missing users before OAuth work that hits OAuth. */
 function requireInteractiveUser(ctx) {
   const user = ctx.currentUser;
   if (!user) {
@@ -46,6 +46,91 @@ function requireInteractiveUser(ctx) {
     return 'Not authenticated.';
   }
   return null;
+}
+
+function normalizeIdentity(value) {
+  return value ? String(value).trim().toLowerCase() : '';
+}
+
+/**
+ * OAuth issues the authorization code to whoever actually completed the login in
+ * their browser, not to whoever is redeeming it via our API. If an attacker starts
+ * their own PKCE login (legitimately, under their own YouTrack account) and then lures
+ * a victim with a live OAuth SSO session into opening that authorize URL, the code
+ * that comes back is bound to the victim's OAuth identity, not the attacker's — but
+ * our server-side state/verifier storage alone can't tell the two apart, since the
+ * attacker owns that state entry. Asking OAuth's userinfo endpoint who the access
+ * token belongs to asserts who really authenticated; it must match the YouTrack user
+ * redeeming the code, or we'd bind the victim's Phonemos identity to the attacker's
+ * YouTrack account. (A local, unverified id_token decode would tell us the same thing,
+ * but without checking the signature — asking OAuth live is both simpler to
+ * implement in this script sandbox and strictly more trustworthy.)
+ */
+function fetchUserInfo(settings, accessToken) {
+  const userInfoUrl = urlSafety.userInfoUrlFromTokenUrl(settings.oauthTokenUrl);
+  if (!userInfoUrl) {
+    return {ok: false, message: 'Userinfo endpoint unavailable.'};
+  }
+  const checked = urlSafety.validateHttpsUrl(userInfoUrl, 'OAuth userinfo URL');
+  if (!checked.ok) {
+    return {ok: false, message: checked.message};
+  }
+  const slash = userInfoUrl.indexOf('/', userInfoUrl.indexOf('://') + 3);
+  const origin = slash === -1 ? userInfoUrl : userInfoUrl.substring(0, slash);
+  const path = slash === -1 ? '/' : userInfoUrl.substring(slash);
+
+  try {
+    const connection = new http.Connection(origin);
+    connection.addHeader('Authorization', 'Bearer ' + accessToken);
+    connection.addHeader('Accept', 'application/json');
+    const response = connection.getSync(path, null);
+    if (!response || !response.isSuccess) {
+      return {ok: false, message: 'Userinfo request failed.'};
+    }
+    const claims = parseJsonSafe(response);
+    if (!claims || typeof claims !== 'object') {
+      return {ok: false, message: 'Userinfo response was not valid JSON.'};
+    }
+    return {ok: true, claims: claims};
+  } catch (e) {
+    return {ok: false, message: 'Userinfo request failed.'};
+  }
+}
+
+function verifyIdentity(ctx, settings, accessToken) {
+  const requireName = settings.oauthVerifyNameMatch !== false;
+  const requireEmail = settings.oauthVerifyEmailMatch !== false;
+  if (!requireName && !requireEmail) {
+    return {ok: true};
+  }
+
+  const info = fetchUserInfo(settings, accessToken);
+  if (!info.ok) {
+    return {ok: false, message: 'Unable to verify the Phonemos identity for this connection (' + info.message + ').'};
+  }
+  const claims = info.claims;
+  const user = ctx.currentUser;
+  const expectedEmail = normalizeIdentity(user && user.email);
+  const expectedLogin = normalizeIdentity(user && user.login);
+  const tokenEmail = normalizeIdentity(claims.email);
+  const tokenUsername = normalizeIdentity(claims.preferred_username);
+  const emailMatches = !!(expectedEmail && tokenEmail && expectedEmail === tokenEmail);
+  const usernameMatches = !!(expectedLogin && tokenUsername && expectedLogin === tokenUsername);
+
+  const errors = [];
+  if (requireName && !usernameMatches) {
+    errors.push('The OAuth username (' + tokenUsername + ') returned for this login does not match your YouTrack account (' + expectedLogin + ').');
+  }
+  if (requireEmail && !emailMatches) {
+    errors.push('The OAuth e-mail (' + tokenEmail + ') returned for this login does not match your YouTrack account (' + expectedEmail + ').');
+  }
+
+  if (errors.length !== 0) {
+    errors.push('This is required by the app\'s global settings.');
+    return {ok: false, message: errors.join(' ')};
+  } else {
+    return {ok: true};
+  }
 }
 
 function parseJsonObject(raw) {
@@ -237,7 +322,7 @@ function clearPendingResult(ctx, state) {
 }
 
 /**
- * Simple per-user rate limit for OAuth endpoints that can hit Keycloak.
+ * Simple per-user rate limit for OAuth endpoints that can hit OAuth.
  * Must only be called from POST handlers (writes User extension properties).
  */
 function consumeOAuthRateLimit(ctx) {
@@ -361,7 +446,7 @@ function concurrentRefreshWon(latest, sentRefreshToken) {
 
 /**
  * Refresh the stored session for this user.
- * Clears tokens only when Keycloak returns invalid_grant and no other request
+ * Clears tokens only when OAuth returns invalid_grant and no other request
  * already stored a newer refresh token. Timeouts and 5xx leave the session in place.
  */
 function refreshStoredTokens(ctx, settings) {
@@ -453,7 +538,7 @@ function refreshStoredTokens(ctx, settings) {
 }
 
 /**
- * Revoke the stored refresh token at Keycloak, then delete the local session.
+ * Revoke the stored refresh token at OAuth, then delete the local session.
  * Used for logout and for a Phonemos 401. Not used when refresh fails transiently.
  */
 function disconnectUser(ctx, settings) {
@@ -474,7 +559,7 @@ function disconnectUser(ctx, settings) {
 
 /**
  * Return a usable access token for the current YouTrack user from server storage.
- * Refreshes via Keycloak when expired. Never trusts client-supplied tokens.
+ * Refreshes via OAuth when expired. Never trusts client-supplied tokens.
  */
 function ensureAccessToken(ctx, settings) {
   const tokens = readUserTokens(ctx);
@@ -505,6 +590,7 @@ function ensureAccessToken(ctx, settings) {
 
 exports.currentUserId = currentUserId;
 exports.requireInteractiveUser = requireInteractiveUser;
+exports.verifyIdentity = verifyIdentity;
 exports.readUserTokens = readUserTokens;
 exports.writeUserTokens = writeUserTokens;
 exports.clearUserTokens = clearUserTokens;

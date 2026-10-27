@@ -54,6 +54,20 @@
       "minLength": 1,
       "x-scope": "GLOBAL"
     },
+    "oauthVerifyNameMatch": {
+      "title": "OAuth user verification: name must match",
+      "description": "After login, require the OAuth user's username to match this YouTrack user's login.",
+      "type": "boolean",
+      "default": true,
+      "x-scope": "GLOBAL"
+    },
+    "oauthVerifyEmailMatch": {
+      "title": "OAuth user verification: e-mail must match",
+      "description": "After login, require the OAuth user's e-mail to match this YouTrack user's e-mail.",
+      "type": "boolean",
+      "default": true,
+      "x-scope": "GLOBAL"
+    },
     "withinObjectId": {
       "title": "Phonemos search root",
       "description": "Object UUID, 22-char slug, or topic URL to search within (e.g. https://showcase.phonemos.cloud/t/hgZU0Gy-S5ObkiUPdABgrQ/start). The app converts URLs/slugs to a UUID for the API.",

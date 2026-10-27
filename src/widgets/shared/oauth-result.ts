@@ -211,6 +211,7 @@ export function waitForOAuthResult(
     const accept = (data: OAuthResultPayload) => {
       // Ignore stale results from earlier attempts — never reject/close on mismatch.
       if (!data.state || data.state !== expectedState) {
+        console.error('Skipping stale result');
         return;
       }
       ackPopup();
@@ -237,6 +238,7 @@ export function waitForOAuthResult(
       const fromPopup = Boolean(popup && event.source === popup);
       const fromHost = Boolean(hostOrigin && event.origin === hostOrigin);
       if (!fromPopup && !fromHost) {
+        console.error('Event source and origin cannot be confirmed', fromHost, fromPopup);
         return;
       }
       accept(event.data);

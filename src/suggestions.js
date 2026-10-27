@@ -541,7 +541,7 @@ exports.httpHandler = {
           if (err.code === 401) {
             phonemosSession.disconnectUser(ctx, settings);
             message +=
-              '\n\nPhonemos rejected the access token. In Keycloak, open this app’s client → Client scopes ' +
+              '\n\nPhonemos rejected the access token. In OAuth, open this app’s client → Client scopes ' +
               'and assign the realm scope "hasura" as Default (it adds the Hasura claims Phonemos requires). ' +
               'Also request scope "hasura" (app setting OAuth scopes). Then disconnect/reconnect in the widget.';
           }

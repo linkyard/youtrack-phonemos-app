@@ -295,8 +295,20 @@ function revokeUrlFromTokenUrl(tokenUrl) {
   return null;
 }
 
+function userInfoUrlFromTokenUrl(tokenUrl) {
+  const raw = String(tokenUrl || '').trim();
+  if (!raw) {
+    return null;
+  }
+  if (/\/token\/?$/i.test(raw)) {
+    return raw.replace(/\/token\/?$/i, '/userinfo');
+  }
+  return null;
+}
+
 exports.validateHttpsUrl = validateHttpsUrl;
 exports.validateOutboundSettings = validateOutboundSettings;
 exports.isAllowedOAuthRedirectUri = isAllowedOAuthRedirectUri;
 exports.hostNameFromHeader = hostNameFromHeader;
 exports.revokeUrlFromTokenUrl = revokeUrlFromTokenUrl;
+exports.userInfoUrlFromTokenUrl = userInfoUrlFromTokenUrl;
