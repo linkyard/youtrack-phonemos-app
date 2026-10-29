@@ -20,93 +20,47 @@
   </head>
   <body>
     <h1>Phonemos</h1>
-    <p id="msg">Connecting…</p>
+    <span id="msg"><p>Connecting…</p></span>
     <script>
-      (function () {
-        var MESSAGE_TYPE = 'phonemos:oauth';
-        var ACK_TYPE = 'phonemos:oauth-ack';
-        var params = new URLSearchParams(window.location.search);
-        if (!params.get('code') && !params.get('error') && window.location.hash) {
-          var hash = window.location.hash.charAt(0) === '#' ? window.location.hash.slice(1) : window.location.hash;
-          if (hash.indexOf('=') >= 0) {
-            params = new URLSearchParams(hash);
-          }
-        }
-        var code = params.get('code');
-        var state = params.get('state');
-        var error = params.get('error_description') || params.get('error');
-        var msg = document.getElementById('msg');
-        if (!(code || error)) {
-          msg.textContent = 'No authorization response found. You can close this window.';
-          return;
-        }
+      var MESSAGE_TYPE = 'phonemos:oauth';
 
-        var payload = {
-          type: MESSAGE_TYPE,
-          code: code,
-          state: state,
-          error: error,
-          ts: Date.now(),
-        };
+      var params = new URLSearchParams(window.location.search);
+      var code = params.get('code');
+      var state = params.get('state');
+      var error = params.get('error_description') || params.get('error');
+      var msg = document.getElementById('msg');
 
-        // YouTrack widgets run in about:srcdoc (opaque origin). A concrete
-        // targetOrigin never matches, so the opener must be addressed with '*'.
-        // The opener still requires event.source === this popup and matching state.
+      if (!(code || error)) {
+        msg.innerHTML = '<p>Error:No authorization response found.<br />You can close this window.</p>';
+
+      } else if (error) {
+        msg.innerHTML = '<p>Received an error from connection attempt.<br /><br />' +
+          error +
+          '<br /><br />You can close this window.</p>';
+      
+      } else { 
+
+        var payload = {type: MESSAGE_TYPE, code: code, state: state, error: error, ts: Date.now()};
         var opener = window.opener || (window.top && window.top.opener) || null;
-        var acked = false;
 
-        function notifyOpener() {
-          try {
-            window.name = 'phonemos-oauth:' + JSON.stringify(payload);
-          } catch (e) {}
-          try {
-            if (opener) {
-              opener.postMessage(payload, '*');
-            }
-          } catch (e) {}
-        }
+        try {
+          if (opener) {
 
-        function closeNow() {
-          try {
-            window.close();
-          } catch (e) {}
-        }
+            opener.postMessage(payload, '*');
+            setTimeout(() => opener.postMessage(payload, '*'), 200);
+            setTimeout(() => opener.postMessage(payload, '*'), 400);
+            setTimeout(() => opener.postMessage(payload, '*'), 600);
 
-        // Retry until the opener explicitly acknowledges receipt — don't guess a
-        // delay/retry count. Whichever channel it actually caught us on (postMessage,
-        // window.name poll, or the oauth/pending poll), it tells us so here, and only
-        // then do we close. The timeout below is just a safety net in case the opener
-        // never shows up at all (e.g. the widget was closed or crashed).
-        var retryTimer = setInterval(notifyOpener, 400);
-        notifyOpener();
+            msg.innerHTML = '<p>Successfully connected.<br />This window will close automatically...</p>'
+            setTimeout(() => window.close(), 800);
 
-        window.addEventListener('message', function (event) {
-          var data = event.data;
-          if (acked || !data || data.type !== ACK_TYPE || data.state !== state) {
-            return;
+          } else {
+            msg.innerHTML = '<p>Error: Unable to connect to the main window.<br />You can close this window.</p>'
           }
-          if (opener && event.source !== opener) {
-            return;
-          }
-          acked = true;
-          clearInterval(retryTimer);
-          closeNow();
-        });
-
-        setTimeout(function () {
-          if (acked) {
-            return;
-          }
-          clearInterval(retryTimer);
-          closeNow();
-        }, 60000);
-
-        if (error) {
-          msg.textContent = 'Connection failed: ' + error;
-        } else {
-          msg.textContent = 'Connected. You can close this window.';
+        } catch (e) {
+          msg.innerHTML = '<p>Error: Unable to connect to the main window.<br />You can close this window.</p>'
         }
-      })();
+      }
     </script>
   </body>
 </html>

@@ -1,4 +1,4 @@
-import {clearPublishedOAuthResult, publishOAuthResult, waitForOAuthResult} from '../shared/oauth-result';
+import {publishOAuthResult, waitForOAuthResult} from '../shared/oauth-result';
 import {deriveOAuthCallbackUrl, getRedirectDebugInfo, resolveOAuthRedirectUri} from '../shared/redirect-uri';
 
 type HostAPI = Awaited<ReturnType<typeof YTApp.register>>;
@@ -345,7 +345,6 @@ export async function connectPhonemos(host: HostAPI): Promise<PhonemosSession> {
 
   try {
     memorySession = null;
-    await clearPublishedOAuthResult(host);
 
     const config = await fetchAppOrThrow<OAuthConfig>(host, 'backend/oauth/config', {method: 'GET'});
     if (!config.success) {
@@ -421,7 +420,7 @@ export async function connectPhonemos(host: HostAPI): Promise<PhonemosSession> {
     });
 
     const viaCode = (async () => {
-      const code = await waitForOAuthResult(host, state, popup);
+      const code = await waitForOAuthResult(state, popup);
       pushDebug(`codePath: got code len=${String(code).length}`);
       // Best-effort: the popup can never reach oauth/complete itself (served from a
       // sandboxed, opaque-origin appResources host — fetch() from there can't satisfy

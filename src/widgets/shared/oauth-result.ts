@@ -1,5 +1,4 @@
 export const OAUTH_RESULT_TYPE = 'phonemos:oauth';
-export const OAUTH_ACK_TYPE = 'phonemos:oauth-ack';
 export const OAUTH_STORAGE_KEY = 'phonemos:oauth-result';
 
 export type OAuthResultPayload = {
@@ -64,10 +63,6 @@ export function youTrackHostOrigin(): string | null {
   return null;
 }
 
-/**
- * Publish the OAuth code to the opener and finish on the YouTrack backend.
- * Opener is usually about:srcdoc — postMessage must use '*' or it never delivers.
- */
 export async function publishOAuthResult(
   host: HostWithStorage,
   payload: Omit<OAuthResultPayload, 'type' | 'ts'>,
@@ -78,28 +73,6 @@ export async function publishOAuthResult(
     ...payload,
   };
 
-  try {
-    window.name = `phonemos-oauth:${JSON.stringify(full)}`;
-  } catch {
-    // ignore
-  }
-
-  const opener = window.opener || window.top?.opener || null;
-  try {
-    opener?.postMessage(full, '*');
-  } catch {
-    // ignore
-  }
-
-  if (host.storage?.setItem) {
-    try {
-      await host.storage.setItem(OAUTH_STORAGE_KEY, JSON.stringify(full));
-    } catch {
-      // ignore
-    }
-  }
-
-  // Authenticated YouTrack handler, polled by the ticket/menu widget.
   if (host.fetchApp && full.state) {
     try {
       await host.fetchApp('backend/oauth/complete', {
@@ -110,16 +83,6 @@ export async function publishOAuthResult(
           error: full.error ?? null,
         },
       });
-    } catch {
-      // ignore
-    }
-  }
-}
-
-export async function clearPublishedOAuthResult(host: HostWithStorage): Promise<void> {
-  if (host.storage?.removeItem) {
-    try {
-      await host.storage.removeItem(OAUTH_STORAGE_KEY);
     } catch {
       // ignore
     }
@@ -180,155 +143,65 @@ export async function waitForOAuthParams(
 }
 
 export function waitForOAuthResult(
-  host: HostWithStorage,
   expectedState: string,
   popup: Window | null,
 ): Promise<string> {
   return new Promise((resolve, reject) => {
-    let settled = false;
     const hostOrigin = youTrackHostOrigin();
 
-    const settle = (fn: () => void) => {
-      if (settled) {
+    const onMessage = (event: MessageEvent) => {
+      const data: OAuthResultPayload = event.data;
+      if (!isOAuthResult(data)) {
         return;
       }
-      settled = true;
-      cleanup();
-      fn();
-    };
 
-    // The popup retries notifyOpener() on an interval until it hears this back —
-    // tell it to stop as soon as we've recognized its result, on any channel
-    // (postMessage, window.name poll, or oauth/pending poll).
-    const ackPopup = () => {
-      try {
-        popup?.postMessage({type: OAUTH_ACK_TYPE, state: expectedState}, '*');
-      } catch {
-        // ignore
+      const fromPopup = Boolean(popup && event.source === popup);
+      const fromHost = Boolean(hostOrigin && event.origin === hostOrigin);
+      if (!fromPopup && !fromHost) {
+        console.error('Event source and origin cannot be confirmed.', fromHost, fromPopup);
+        return;
       }
-    };
-
-    const accept = (data: OAuthResultPayload) => {
       // Ignore stale results from earlier attempts — never reject/close on mismatch.
       if (!data.state || data.state !== expectedState) {
         console.error('Skipping stale result');
         return;
       }
-      ackPopup();
+
       if (data.error) {
-        settle(() => reject(new Error(String(data.error))));
+        reject(new Error(String(data.error)));
+        cleanup();
         return;
       }
       if (!data.code) {
-        settle(() => reject(new Error('OAuth response did not include an authorization code.')));
+        reject(new Error('OAuth response did not include an authorization code'));
+        cleanup();
         return;
       }
-      settle(() => {
-        void clearPublishedOAuthResult(host);
-        resolve(String(data.code));
-      });
+      
+      resolve(String(data.code));
+      cleanup();
     };
-
-    const onMessage = (event: MessageEvent) => {
-      if (!isOAuthResult(event.data)) {
-        return;
-      }
-      // Trust our popup window, or any message from the YouTrack host origin
-      // (callback page). Do not require event.origin === about:srcdoc origin.
-      const fromPopup = Boolean(popup && event.source === popup);
-      const fromHost = Boolean(hostOrigin && event.origin === hostOrigin);
-      if (!fromPopup && !fromHost) {
-        console.error('Event source and origin cannot be confirmed', fromHost, fromPopup);
-        return;
-      }
-      accept(event.data);
-    };
-
-    const readPopupName = (): OAuthResultPayload | null => {
-      if (!popup) {
-        return null;
-      }
-      try {
-        const raw = String(popup.name || '');
-        const prefix = 'phonemos-oauth:';
-        if (!raw.startsWith(prefix)) {
-          return null;
-        }
-        return parseOAuthResult(raw.slice(prefix.length));
-      } catch {
-        return null;
-      }
-    };
-
-    const poll = window.setInterval(() => {
-      void (async () => {
-        const fromName = readPopupName();
-        if (fromName) {
-          accept(fromName);
-          return;
-        }
-
-        if (host.storage?.getItem) {
-          try {
-            const stored = parseOAuthResult(await host.storage.getItem(OAUTH_STORAGE_KEY));
-            if (stored) {
-              accept(stored);
-              return;
-            }
-          } catch {
-            // ignore
-          }
-        }
-
-        if (host.fetchApp) {
-          try {
-            // POST one-time consumes the pending code on the server.
-            const pending = await host.fetchApp<{
-              success?: boolean;
-              pending?: boolean;
-              type?: string;
-              code?: string | null;
-              state?: string | null;
-              error?: string | null;
-            }>('backend/oauth/pending', {
-              method: 'POST',
-              body: {state: expectedState},
-            });
-            if (pending?.success && pending.pending) {
-              accept({
-                type: OAUTH_RESULT_TYPE,
-                code: pending.code,
-                state: pending.state,
-                error: pending.error,
-                ts: Date.now(),
-              });
-            }
-          } catch {
-            // ignore
-          }
-        }
-      })();
-    }, 300);
 
     let closedGrace: number | null = null;
     const onPopupCheck = window.setInterval(() => {
-      if (!popup || !popup.closed || settled) {
+      if (!popup || !popup.closed) {
         return;
       }
       if (closedGrace == null) {
         closedGrace = window.setTimeout(() => {
-          settle(() => reject(new Error('Phonemos connection was cancelled.')));
+          reject(new Error('Phonemos connection was cancelled.'));
+          cleanup();
         }, 4000);
       }
     }, 200);
 
-    const timeout = window.setTimeout(() => {
-      settle(() => reject(new Error('Phonemos connection timed out.')));
+    const timeoutConnection = window.setTimeout(() => {
+      reject(new Error('Phonemos connection timed out.'));
+      cleanup();
     }, 5 * 60 * 1000);
 
     const cleanup = () => {
-      window.clearTimeout(timeout);
-      window.clearInterval(poll);
+      window.clearTimeout(timeoutConnection);
       window.clearInterval(onPopupCheck);
       if (closedGrace != null) {
         window.clearTimeout(closedGrace);
@@ -337,6 +210,5 @@ export function waitForOAuthResult(
     };
 
     window.addEventListener('message', onMessage);
-    void clearPublishedOAuthResult(host);
   });
 }
