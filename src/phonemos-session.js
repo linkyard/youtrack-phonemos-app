@@ -1,6 +1,6 @@
 /**
  * Per-user Phonemos OAuth state (User extension properties).
- * Tokens, in-flight login, pending code, and rate limits stay off shared AppGlobalStorage.
+ * Tokens, in-flight login, and rate limits stay off shared AppGlobalStorage.
  * Legacy global maps are nulled once from POST handlers and are not used for auth.
  */
 const http = require('@jetbrains/youtrack-scripting-api/http');
@@ -253,70 +253,6 @@ function clearLogin(ctx, state) {
     const entry = parseJsonObject(props.phonemosOAuthLogin);
     if (!state || (entry && String(entry.state) === String(state))) {
       props.phonemosOAuthLogin = null;
-    }
-  }
-}
-
-function storePendingResult(ctx, state, code, error) {
-  const props = userExtensionProperties(ctx);
-  if (!props || !state || !(code || error)) {
-    return false;
-  }
-  props.phonemosOAuthPending = JSON.stringify({
-    state: String(state),
-    code: code || null,
-    error: error || null,
-    ts: Date.now(),
-  });
-  return true;
-}
-
-function readPendingResult(ctx, state) {
-  if (!state) {
-    return null;
-  }
-  const props = userExtensionProperties(ctx);
-  if (!props) {
-    return null;
-  }
-  const entry = parseJsonObject(props.phonemosOAuthPending);
-  if (!entry) {
-    return null;
-  }
-  if (!entry.ts || Date.now() - Number(entry.ts) > OAUTH_TTL_MS) {
-    props.phonemosOAuthPending = null;
-    return null;
-  }
-  if (String(entry.state) === String(state)) {
-    return {
-      code: entry.code || null,
-      error: entry.error || null,
-      state: String(state),
-      ts: Number(entry.ts),
-    };
-  }
-  return null;
-}
-
-/**
- * Read and clear pending OAuth result for this user+state (one-time consume).
- * Must only be called from POST handlers.
- */
-function consumePendingResult(ctx, state) {
-  const entry = readPendingResult(ctx, state);
-  if (!entry) {
-    return null;
-  }
-  clearPendingResult(ctx, state);
-  return entry;
-}
-
-function clearPendingResult(ctx, state) {
-  const props = userExtensionProperties(ctx);
-  if (props) {
-    const entry = parseJsonObject(props.phonemosOAuthPending);
-    if (!state || (entry && String(entry.state) === String(state))) {
-      props.phonemosOAuthPending = null;
     }
   }
 }
@@ -597,10 +533,6 @@ exports.clearUserTokens = clearUserTokens;
 exports.storeLogin = storeLogin;
 exports.readLogin = readLogin;
 exports.clearLogin = clearLogin;
-exports.storePendingResult = storePendingResult;
-exports.readPendingResult = readPendingResult;
-exports.consumePendingResult = consumePendingResult;
-exports.clearPendingResult = clearPendingResult;
 exports.consumeOAuthRateLimit = consumeOAuthRateLimit;
 exports.ensureAccessToken = ensureAccessToken;
 exports.refreshStoredTokens = refreshStoredTokens;

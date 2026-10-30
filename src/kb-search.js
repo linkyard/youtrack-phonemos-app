@@ -36,7 +36,6 @@ exports.httpHandler = {
       method: 'POST',
       path: 'query',
       handle: function handle(ctx) {
-        phonemosSession.purgeLegacyGlobalSecrets(ctx);
         const authError = phonemosSession.requireInteractiveUser(ctx);
         if (authError) {
           return ctx.response.json({success: false, needsAuth: true, message: authError});

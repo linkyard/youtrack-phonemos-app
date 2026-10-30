@@ -23,9 +23,6 @@
         "phonemosOAuthLogin": {
           "type": "string"
         },
-        "phonemosOAuthPending": {
-          "type": "string"
-        },
         "phonemosOAuthRate": {
           "type": "string"
         }

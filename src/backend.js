@@ -12,14 +12,6 @@ function trimTrailingSlash(url) {
   return String(url || '').replace(/\/+$/, '');
 }
 
-function storePendingResult(ctx, state, code, error) {
-  return phonemosSession.storePendingResult(ctx, state, code, error);
-}
-
-function clearPendingResult(ctx, state) {
-  return phonemosSession.clearPendingResult(ctx, state);
-}
-
 function storeLogin(ctx, state, codeVerifier, redirectUri) {
   return phonemosSession.storeLogin(ctx, state, codeVerifier, redirectUri);
 }
@@ -325,7 +317,6 @@ exports.httpHandler = {
         if (authError) {
           return ctx.response.json({success: false, message: authError});
         }
-        phonemosSession.purgeLegacyGlobalSecrets(ctx);
         const rateError = rejectIfRateLimited(ctx);
         if (rateError) {
           return ctx.response.json({success: false, message: rateError});
@@ -408,7 +399,6 @@ exports.httpHandler = {
         if (authError) {
           return ctx.response.json({success: false, message: authError});
         }
-        phonemosSession.purgeLegacyGlobalSecrets(ctx);
         const body = ctx.request.json() || {};
         const state = body.state;
         const code = body.code || null;
@@ -419,10 +409,6 @@ exports.httpHandler = {
         if (!code && !error) {
           return ctx.response.json({success: false, message: 'code or error is required.'});
         }
-
-        // Stash before rate-limit / token work so the parent can still finish via
-        // oauth/pending + oauth/token if this request cannot finalize.
-        storePendingResult(ctx, state, code, error);
 
         if (error) {
           clearLogin(ctx, state);
@@ -467,10 +453,6 @@ exports.httpHandler = {
         }
         const redirectError = rejectRedirectUri(ctx, settings, login.redirectUri);
         if (redirectError) {
-          // Do not also clearPendingResult here: it was just written earlier in this
-          // same request, and deleting a same-request write in one flush trips Xodus's
-          // ConstraintsValidationException on the PluggedStringAttribute. It expires via
-          // OAUTH_TTL_MS on its own.
           clearLogin(ctx, state);
           return ctx.response.json({
             success: false,
@@ -489,7 +471,7 @@ exports.httpHandler = {
         );
         const tokens = tokensFromMappedResponse(mapped);
         if (!tokens) {
-          // Keep pending + login so the parent can retry token exchange.
+          // Keep login so the parent can retry token exchange.
           return ctx.response.json({
             success: false,
             connected: false,
@@ -502,7 +484,6 @@ exports.httpHandler = {
           // The code was redeemed, but for a different OAuth identity than this
           // YouTrack user — do not persist it, and do not let the parent retry.
           phonemosSession.revokeRefreshToken(settings, tokens.refreshToken);
-          // See the redirectError branch above for why clearPendingResult is skipped here.
           clearLogin(ctx, state);
           return ctx.response.json({
             success: false,
@@ -519,41 +500,8 @@ exports.httpHandler = {
             message: 'Unable to store Phonemos session for this YouTrack user.',
           });
         }
-        // See the redirectError branch above for why clearPendingResult is skipped here.
         clearLogin(ctx, state);
         return ctx.response.json({success: true, connected: true, finalized: true});
-      },
-    },
-    {
-      scope: 'global',
-      // POST so we can one-time consume (clear) after handing out the code.
-      method: 'POST',
-      path: 'oauth/pending',
-      handle: function handle(ctx) {
-        const authError = rejectIfUnauthorized(ctx);
-        if (authError) {
-          return ctx.response.json({success: false, message: authError});
-        }
-        phonemosSession.purgeLegacyGlobalSecrets(ctx);
-        const body = ctx.request.json() || {};
-        const state = body.state || ctx.request.getParameter('state');
-        if (!state) {
-          return ctx.response.json({success: false, message: 'state is required.'});
-        }
-
-        const entry = phonemosSession.consumePendingResult(ctx, state);
-        if (!entry) {
-          return ctx.response.json({success: true, pending: false});
-        }
-
-        return ctx.response.json({
-          success: true,
-          pending: true,
-          type: OAUTH_POPUP_MESSAGE_TYPE,
-          code: entry.code || null,
-          state: String(state),
-          error: entry.error || null,
-        });
       },
     },
     {
@@ -565,7 +513,6 @@ exports.httpHandler = {
         if (authError) {
           return ctx.response.json({success: false, message: authError});
         }
-        phonemosSession.purgeLegacyGlobalSecrets(ctx);
         const rateError = rejectIfRateLimited(ctx);
         if (rateError) {
           return ctx.response.json({success: false, message: rateError});
@@ -604,18 +551,9 @@ exports.httpHandler = {
         const redirectError = rejectRedirectUri(ctx, settings, login.redirectUri);
         if (redirectError) {
           clearLogin(ctx, state);
-          clearPendingResult(ctx, state);
           return ctx.response.json({
             success: false,
             message: redirectError,
-          });
-        }
-
-        const pending = phonemosSession.readPendingResult(ctx, state);
-        if (pending && pending.code && String(pending.code) !== code) {
-          return ctx.response.json({
-            success: false,
-            message: 'Authorization code does not match the pending Phonemos login.',
           });
         }
 
@@ -634,7 +572,6 @@ exports.httpHandler = {
             // YouTrack user — do not persist it. Revoke so the leaked code is dead either way.
             phonemosSession.revokeRefreshToken(settings, tokens.refreshToken);
             clearLogin(ctx, state);
-            clearPendingResult(ctx, state);
             return ctx.response.json({success: false, message: identity.message});
           }
           if (!writeUserTokens(ctx, tokens)) {
@@ -644,7 +581,6 @@ exports.httpHandler = {
             });
           }
           clearLogin(ctx, state);
-          clearPendingResult(ctx, state);
           // Do not return refresh tokens to the widget.
           return ctx.response.json(publicTokenResponse(mapped, tokens));
         }
@@ -660,7 +596,6 @@ exports.httpHandler = {
         if (authError) {
           return ctx.response.json({success: false, message: authError});
         }
-        phonemosSession.purgeLegacyGlobalSecrets(ctx);
         const rateError = rejectIfRateLimited(ctx);
         if (rateError) {
           return ctx.response.json({success: false, message: rateError});
@@ -712,10 +647,8 @@ exports.httpHandler = {
         if (authError) {
           return ctx.response.json({success: false, message: authError});
         }
-        phonemosSession.purgeLegacyGlobalSecrets(ctx);
         phonemosSession.disconnectUser(ctx, requireSettings(ctx));
         clearLogin(ctx, null);
-        clearPendingResult(ctx, null);
         return ctx.response.json({success: true, connected: false});
       },
     },

@@ -100,7 +100,7 @@ The **Phonemos search** main-menu page searches the whole site. It resolves the 
 1. Widget opens a Keycloak authorize popup (PKCE).
 2. Callback page finishes via authenticated `oauth/complete` and notifies the opener (`postMessage` with `*` so `about:srcdoc` widgets receive it; the opener accepts only its popup / YouTrack host origin and matching `state`).
 3. YouTrack HTTP handler exchanges the code using the client secret and the **server-stored** PKCE verifier/`redirect_uri` (the `appResources` popup callback on this YouTrack host). Tokens are stored on the YouTrack User (`phonemosOAuthSession`). Access and refresh tokens never leave the YouTrack backend; the widget only sees `{connected: true}`.
-4. Pending authorization codes are handed out once via `POST oauth/pending` (consumed). Disconnect, and a Phonemos 401, revoke the Keycloak refresh token when possible.
+4. Disconnect, and a Phonemos 401, revoke the Keycloak refresh token when possible.
 5. Ticket suggestions and menu search use the **server-stored** access token for the current YouTrack user (the widget never sends a Bearer token). Phonemos still enforces that user’s permissions. Refresh sends the stored refresh token to the Keycloak token endpoint. `invalid_grant` clears the local session; a timeout or token-endpoint 5xx leaves it in place.
 
 OAuth endpoints reject guest users and rate-limit connection attempts per YouTrack user.

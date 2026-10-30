@@ -482,7 +482,6 @@ exports.httpHandler = {
       path: 'list',
       permissions: ['READ_ISSUE'],
       handle: function handle(ctx) {
-        phonemosSession.purgeLegacyGlobalSecrets(ctx);
         const settings = requireSettings(ctx);
         if (!settings.phonemosBaseUrl) {
           return ctx.response.json({
