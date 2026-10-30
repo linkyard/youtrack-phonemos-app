@@ -393,121 +393,7 @@ exports.httpHandler = {
     {
       scope: 'global',
       method: 'POST',
-      path: 'oauth/complete',
-      handle: function handle(ctx) {
-        const authError = rejectIfUnauthorized(ctx);
-        if (authError) {
-          return ctx.response.json({success: false, message: authError});
-        }
-        const body = ctx.request.json() || {};
-        const state = body.state;
-        const code = body.code || null;
-        const error = body.error || null;
-        if (!state) {
-          return ctx.response.json({success: false, message: 'state is required.'});
-        }
-        if (!code && !error) {
-          return ctx.response.json({success: false, message: 'code or error is required.'});
-        }
-
-        if (error) {
-          clearLogin(ctx, state);
-          return ctx.response.json({success: true, connected: false, finalized: false, error: String(error)});
-        }
-
-        // Prefer finishing the token exchange here so the issue widget can remount
-        // safely and just read oauth/session.
-        const login = readLogin(ctx, state);
-        if (!login || !login.codeVerifier || !login.redirectUri) {
-          return ctx.response.json({
-            success: true,
-            connected: false,
-            finalized: false,
-            message: 'Login verifier missing; parent widget must finish token exchange.',
-          });
-        }
-
-        const rateError = rejectIfRateLimited(ctx);
-        if (rateError) {
-          return ctx.response.json({
-            success: false,
-            connected: false,
-            finalized: false,
-            message: rateError,
-          });
-        }
-
-        const settings = requireSettings(ctx);
-        const missing = missingSettings(settings, [
-          'oauthClientId',
-          'oauthClientSecret',
-          'oauthTokenUrl',
-        ]);
-        if (missing.length) {
-          return ctx.response.json({
-            success: false,
-            connected: false,
-            finalized: false,
-            message: 'Missing app settings: ' + missing.join(', '),
-          });
-        }
-        const redirectError = rejectRedirectUri(ctx, settings, login.redirectUri);
-        if (redirectError) {
-          clearLogin(ctx, state);
-          return ctx.response.json({
-            success: false,
-            connected: false,
-            finalized: false,
-            message: redirectError,
-          });
-        }
-        const mapped = mapTokenResponse(
-          exchangeToken(settings, {
-            grant_type: 'authorization_code',
-            code: String(code),
-            redirect_uri: String(login.redirectUri),
-            code_verifier: String(login.codeVerifier),
-          }),
-        );
-        const tokens = tokensFromMappedResponse(mapped);
-        if (!tokens) {
-          // Keep login so the parent can retry token exchange.
-          return ctx.response.json({
-            success: false,
-            connected: false,
-            finalized: false,
-            message: mapped.message || 'Token exchange failed.',
-          });
-        }
-        const identity = phonemosSession.verifyIdentity(ctx, settings, tokens.accessToken);
-        if (!identity.ok) {
-          // The code was redeemed, but for a different OAuth identity than this
-          // YouTrack user — do not persist it, and do not let the parent retry.
-          phonemosSession.revokeRefreshToken(settings, tokens.refreshToken);
-          clearLogin(ctx, state);
-          return ctx.response.json({
-            success: false,
-            connected: false,
-            finalized: true,
-            message: identity.message,
-          });
-        }
-        if (!writeUserTokens(ctx, tokens)) {
-          return ctx.response.json({
-            success: false,
-            connected: false,
-            finalized: false,
-            message: 'Unable to store Phonemos session for this YouTrack user.',
-          });
-        }
-        clearLogin(ctx, state);
-        return ctx.response.json({success: true, connected: true, finalized: true});
-      },
-    },
-    {
-      scope: 'global',
-      method: 'POST',
-      path: 'oauth/token',
+      path: 'oauth/session',
       handle: function handle(ctx) {
         const authError = rejectIfUnauthorized(ctx);
         if (authError) {
@@ -517,6 +403,8 @@ exports.httpHandler = {
         if (rateError) {
           return ctx.response.json({success: false, message: rateError});
         }
+    
+        // Settings verification could be exstracted elsewhere
         const settings = requireSettings(ctx);
         const missing = missingSettings(settings, [
           'oauthClientId',
@@ -533,11 +421,16 @@ exports.httpHandler = {
         const body = ctx.request.json() || {};
         const state = body.state;
         const code = body.code ? String(body.code) : '';
+        const error = body.error || null;
         if (!state || !code) {
           return ctx.response.json({
             success: false,
             message: 'state and code are required.',
           });
+        }
+        if (error) {
+          clearLogin(ctx, state);
+          return ctx.response.json({success: true, connected: false, finalized: false, error: String(error)});
         }
 
         // Bind exchange to the server-stored PKCE login — never trust client verifier/redirect.
@@ -545,7 +438,7 @@ exports.httpHandler = {
         if (!login || !login.codeVerifier || !login.redirectUri) {
           return ctx.response.json({
             success: false,
-            message: 'No in-flight Phonemos login for this state. Start Connect again.',
+            message: 'Login verifier missing. Start Connect again.',
           });
         }
         const redirectError = rejectRedirectUri(ctx, settings, login.redirectUri);
@@ -589,6 +482,19 @@ exports.httpHandler = {
     },
     {
       scope: 'global',
+      method: 'GET',
+      path: 'oauth/session',
+      handle: function handle(ctx) {
+        const authError = rejectIfUnauthorized(ctx);
+        if (authError) {
+          return ctx.response.json({success: false, message: authError});
+        }
+        // Never return access/refresh tokens to the browser.
+        return ctx.response.json(publicSessionResponse(readUserTokens(ctx)));
+      },
+    },
+    {
+      scope: 'global',
       method: 'POST',
       path: 'oauth/refresh',
       handle: function handle(ctx) {
@@ -623,19 +529,6 @@ exports.httpHandler = {
           });
         }
         return ctx.response.json(publicSessionResponse(refreshed.tokens));
-      },
-    },
-    {
-      scope: 'global',
-      method: 'GET',
-      path: 'oauth/session',
-      handle: function handle(ctx) {
-        const authError = rejectIfUnauthorized(ctx);
-        if (authError) {
-          return ctx.response.json({success: false, message: authError});
-        }
-        // Never return access/refresh tokens to the browser.
-        return ctx.response.json(publicSessionResponse(readUserTokens(ctx)));
       },
     },
     {

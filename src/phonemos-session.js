@@ -145,8 +145,12 @@ function parseJsonObject(raw) {
   }
 }
 
-function parseTokenEntry(raw) {
-  const parsed = parseJsonObject(raw);
+function readUserTokens(ctx) {
+  const props = userExtensionProperties(ctx);
+  if (!props) {
+    return null;
+  }
+  const parsed = parseJsonObject(props.phonemosOAuthSession);
   if (!parsed || !parsed.accessToken) {
     return null;
   }
@@ -155,30 +159,6 @@ function parseTokenEntry(raw) {
     refreshToken: parsed.refreshToken ? String(parsed.refreshToken) : null,
     expiresAt: parsed.expiresAt != null ? Number(parsed.expiresAt) : null,
   };
-}
-
-/**
- * Drop leftover plaintext token maps on AppGlobalStorage.
- * Call only from POST handlers — YouTrack forbids database writes on GET.
- */
-function purgeLegacyGlobalSecrets(ctx) {
-  if (!ctx.globalStorage || !ctx.globalStorage.extensionProperties) {
-    return;
-  }
-  const props = ctx.globalStorage.extensionProperties;
-  if (props.oauthSessions || props.oauthLogins || props.oauthPending) {
-    props.oauthSessions = null;
-    props.oauthLogins = null;
-    props.oauthPending = null;
-  }
-}
-
-function readUserTokens(ctx) {
-  const props = userExtensionProperties(ctx);
-  if (!props) {
-    return null;
-  }
-  return parseTokenEntry(props.phonemosOAuthSession);
 }
 
 function writeUserTokens(ctx, tokens) {
@@ -537,5 +517,5 @@ exports.consumeOAuthRateLimit = consumeOAuthRateLimit;
 exports.ensureAccessToken = ensureAccessToken;
 exports.refreshStoredTokens = refreshStoredTokens;
 exports.disconnectUser = disconnectUser;
-exports.purgeLegacyGlobalSecrets = purgeLegacyGlobalSecrets;
 exports.revokeRefreshToken = revokeRefreshToken;
+

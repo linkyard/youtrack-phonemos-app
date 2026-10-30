@@ -1,4 +1,4 @@
-import {publishOAuthResult, waitForOAuthResult} from '../shared/oauth-result';
+import {waitForOAuthResult} from '../shared/oauth-result';
 import {deriveOAuthCallbackUrl, getRedirectDebugInfo, resolveOAuthRedirectUri} from '../shared/redirect-uri';
 
 type HostAPI = Awaited<ReturnType<typeof YTApp.register>>;
@@ -11,9 +11,6 @@ export type PhonemosSession = {
   expiresAt: number | null;
   canRefresh?: boolean;
 };
-
-/** @deprecated use PhonemosSession */
-export type PhonemosTokens = PhonemosSession;
 
 type OAuthConfig = {
   success: boolean;
@@ -82,10 +79,6 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => window.setTimeout(resolve, ms));
 }
 
-export function getMemoryTokens(): PhonemosSession | null {
-  return memorySession;
-}
-
 export async function clearPhonemosSession(host: HostAPI): Promise<void> {
   memorySession = null;
   try {
@@ -93,11 +86,6 @@ export async function clearPhonemosSession(host: HostAPI): Promise<void> {
   } catch {
     // ignore
   }
-}
-
-/** @deprecated use clearPhonemosSession */
-export function clearMemoryTokens(): void {
-  memorySession = null;
 }
 
 async function refreshServerSession(host: HostAPI): Promise<PhonemosSession | null> {
@@ -129,7 +117,7 @@ async function fetchSession(host: HostAPI): Promise<PhonemosSession | null> {
   return null;
 }
 
-export async function loadPhonemosSession(host: HostAPI): Promise<PhonemosSession | null> {
+export async function ensurePhonemosTokens(host: HostAPI): Promise<PhonemosSession | null> {
   if (memorySession?.connected && !isExpired(memorySession)) {
     return memorySession;
   }
@@ -144,14 +132,6 @@ export async function loadPhonemosSession(host: HostAPI): Promise<PhonemosSessio
 
   memorySession = null;
   return null;
-}
-
-/**
- * Restore a stored session (and refresh if needed). Does not open the OAuth popup.
- * Returns null when the user still needs to connect.
- */
-export async function ensurePhonemosTokens(host: HostAPI): Promise<PhonemosSession | null> {
-  return loadPhonemosSession(host);
 }
 
 /**
@@ -219,10 +199,6 @@ export function formatUnknownError(error: unknown): string {
   }
 }
 
-function errorText(error: unknown): string {
-  return formatUnknownError(error);
-}
-
 /** Just the plain message, no name=/stack/JSON dump — for short, user-facing summaries. */
 function shortErrorMessage(error: unknown): string {
   if (error == null) {
@@ -274,74 +250,9 @@ function shortUrl(url: string): string {
   }
 }
 
-async function waitForSession(
-  host: HostAPI,
-  popup: Window | null,
-  timeoutMs = 5 * 60 * 1000,
-): Promise<PhonemosSession> {
-  const started = Date.now();
-  let sawClosed = false;
-  let closedAt = 0;
-  let lastSessionError: string | null = null;
-  let polls = 0;
-
-  while (Date.now() - started < timeoutMs) {
-    polls += 1;
-    try {
-      const session = await fetchSession(host);
-      if (session) {
-        try {
-          popup?.close();
-        } catch {
-          // ignore
-        }
-        return session;
-      }
-    } catch (e) {
-      lastSessionError = errorText(e);
-    }
-
-    if (popup?.closed) {
-      if (!sawClosed) {
-        sawClosed = true;
-        closedAt = Date.now();
-      } else if (Date.now() - closedAt > 5000) {
-        const last = await fetchSession(host).catch((e) => {
-          lastSessionError = errorText(e);
-          return null;
-        });
-        if (last) {
-          return last;
-        }
-        throw new Error(
-          [
-            'session-path: popup closed without a stored Phonemos session',
-            `polls=${polls}`,
-            `elapsedMs=${Date.now() - started}`,
-            lastSessionError ? `lastSessionError=${lastSessionError}` : 'lastSessionError=(none)',
-          ].join('\n'),
-        );
-      }
-    }
-
-    await sleep(400);
-  }
-
-  throw new Error(
-    [
-      'session-path: timed out waiting for oauth/session',
-      `polls=${polls}`,
-      `elapsedMs=${Date.now() - started}`,
-      lastSessionError ? `lastSessionError=${lastSessionError}` : 'lastSessionError=(none)',
-    ].join('\n'),
-  );
-}
-
 export async function connectPhonemos(host: HostAPI): Promise<PhonemosSession> {
   const debug: string[] = [];
-  const pushDebug = (line: string) => {
-    debug.push(line);
-  };
+  const pushDebug = (line: string) => debug.push(line);
 
   try {
     memorySession = null;
@@ -409,66 +320,37 @@ export async function connectPhonemos(host: HostAPI): Promise<PhonemosSession> {
       );
     }
 
-    // Primary: popup calls oauth/complete and writes the session (survives widget remount).
-    // Secondary: if this frame stays alive, finish via authorization code.
-    let settled = false;
     const pathErrors: {path: string; error: unknown}[] = [];
 
-    const viaSession = waitForSession(host, popup).then((session) => {
-      settled = true;
-      return session;
-    });
-
-    const viaCode = (async () => {
+    const viaCode = async () => {
       const code = await waitForOAuthResult(state, popup);
       pushDebug(`codePath: got code len=${String(code).length}`);
-      // Best-effort: the popup can never reach oauth/complete itself (served from a
-      // sandboxed, opaque-origin appResources host — fetch() from there can't satisfy
-      // CORS or carry the SameSite=Lax session cookie). host.fetchApp goes through the
-      // trusted YouTrack bridge instead, so do it here to persist the session early —
-      // survives a widget remount even if the oauth/token exchange below never runs.
-      void publishOAuthResult(host, {code, state, error: null});
-      if (settled) {
-        const session = await fetchSession(host);
-        if (!session) {
-          throw new Error('code-path: session missing after OAuth code handoff (session-path already settled).');
-        }
-        return session;
-      }
-      // Server uses the stored PKCE login for this state — do not send verifier/redirect.
-      const tokenResponse = await fetchAppOrThrow<TokenResponse>(host, 'backend/oauth/token', {
+      
+      const tokenResponse = await fetchAppOrThrow<TokenResponse>(host, 'backend/oauth/session', {
         method: 'POST',
         body: {
           state,
           code,
         },
       });
+
       const session = sessionFromResponse(tokenResponse);
       if (!session) {
         throw new Error(tokenResponse.message || 'code-path: token exchange failed.');
       }
       memorySession = session;
-      settled = true;
       try {
         popup.close();
       } catch {
         // ignore
       }
       return session;
-    })();
+    };
 
     try {
-      return await new Promise<PhonemosSession>((resolve, reject) => {
-        let failures = 0;
-        const onFail = (path: string, error: unknown) => {
-          pathErrors.push({path, error});
-          failures += 1;
-          if (!settled && failures >= 2) {
-            reject(new Error('both OAuth completion paths failed'));
-          }
-        };
-        void viaSession.then(resolve, (error) => onFail('session', error));
-        void viaCode.then(resolve, (error) => onFail('code', error));
+      return await viaCode().catch((error) => {
+        pathErrors.push({path: 'code', error});
+        throw Error('OAuth failed.');
       });
     } catch (e) {
       let sessionSnapshot = 'sessionSnapshot=(unreadable)';

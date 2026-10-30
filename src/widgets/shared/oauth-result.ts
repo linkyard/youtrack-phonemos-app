@@ -29,36 +29,18 @@ type HostWithStorage = {
 };
 
 export function isOAuthResult(data: unknown): data is OAuthResultPayload {
-  return Boolean(
-    data &&
-      typeof data === 'object' &&
-      (data as OAuthResultPayload).type === OAUTH_RESULT_TYPE,
-  );
-}
-
-export function parseOAuthResult(raw: string | null | undefined): OAuthResultPayload | null {
-  if (!raw) {
-    return null;
-  }
-  try {
-    const parsed = JSON.parse(raw) as unknown;
-    return isOAuthResult(parsed) ? parsed : null;
-  } catch {
-    return null;
-  }
+  return Boolean(data && typeof data === 'object' && (data as OAuthResultPayload).type === OAUTH_RESULT_TYPE);
 }
 
 /** Origin of the YouTrack host (from baseURI), not the widget's about:srcdoc origin. */
 export function youTrackHostOrigin(): string | null {
   for (const candidate of [document.baseURI, window.location.href]) {
-    try {
-      if (!candidate || candidate.startsWith('about:')) {
-        continue;
-      }
-      return new URL(candidate).origin;
-    } catch {
-      // ignore
+    if (!candidate || candidate.startsWith('about:')) {
+      continue;
     }
+    try {
+      return new URL(candidate).origin;
+    } catch { }
   }
   return null;
 }
