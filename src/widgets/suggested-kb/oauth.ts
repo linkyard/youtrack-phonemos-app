@@ -9,7 +9,6 @@ export {deriveOAuthCallbackUrl, getRedirectDebugInfo, resolveOAuthRedirectUri};
 export type PhonemosSession = {
   connected: true;
   expiresAt: number | null;
-  canRefresh?: boolean;
 };
 
 type OAuthConfig = {
@@ -26,14 +25,12 @@ type TokenResponse = {
   message?: string;
   connected?: boolean;
   expiresAt?: number | null;
-  canRefresh?: boolean;
 };
 
 type SessionResponse = {
   success: boolean;
   connected?: boolean;
   expiresAt?: number | null;
-  canRefresh?: boolean;
   message?: string;
 };
 
@@ -67,7 +64,6 @@ function sessionFromResponse(response: TokenResponse | SessionResponse): Phonemo
   return {
     connected: true,
     expiresAt: response.expiresAt != null ? Number(response.expiresAt) : null,
-    canRefresh: Boolean(response.canRefresh),
   };
 }
 
@@ -93,26 +89,17 @@ export async function ensurePhonemosTokens(host: HostAPI): Promise<PhonemosSessi
     return memorySession;
   }
 
-  const storedSession = await fetchAppOrThrow<SessionResponse>(host, 'backend/oauth/session', {method: 'GET'});
-  if (!storedSession.success || !storedSession.connected) {
+  const session = await fetchAppOrThrow<SessionResponse>(host, 'backend/oauth/ensure-session', {
+      method: 'POST',
+      body: {}
+  });
+  if (!session.success || !session.connected) {
     return null;
   }
-  const fromSession = sessionFromResponse(storedSession);
+  const fromSession = sessionFromResponse(session);
   if (fromSession && !isExpired(fromSession)) {
     memorySession = fromSession;
     return fromSession;
-  }
-
-  if (storedSession.canRefresh || fromSession?.canRefresh) {
-    const refreshed = await fetchAppOrThrow<TokenResponse>(host, 'backend/oauth/refresh', {
-      method: 'POST',
-      body: {},
-    });
-    const next = sessionFromResponse(refreshed);
-    if (next) {
-      memorySession = next;
-      return next;
-    }
   }
 
   memorySession = null;
@@ -311,7 +298,7 @@ export async function connectPhonemos(host: HostAPI): Promise<PhonemosSession> {
       const code = await waitForOAuthResult(state, popup);
       pushDebug(`codePath: got code len=${String(code).length}`);
       
-      const tokenResponse = await fetchAppOrThrow<TokenResponse>(host, 'backend/oauth/session', {
+      const tokenResponse = await fetchAppOrThrow<TokenResponse>(host, 'backend/oauth/new-session', {
         method: 'POST',
         body: {
           state,
@@ -338,12 +325,12 @@ export async function connectPhonemos(host: HostAPI): Promise<PhonemosSession> {
         throw Error('OAuth failed.');
       });
     } catch (e) {
+
+      console.log("error", e);
       let sessionSnapshot = 'sessionSnapshot=(unreadable)';
       try {
-        const session = await fetchAppOrThrow<SessionResponse>(host, 'backend/oauth/session', {method: 'GET'});
-        sessionSnapshot =
-          `sessionSuccess=${String(session.success)} connected=${String(!!session.connected)} ` +
-          `canRefresh=${String(!!session.canRefresh)}`;
+        const session = await fetchAppOrThrow<SessionResponse>(host, 'backend/oauth/ensure-session', {method: 'POST', body: {}});
+        sessionSnapshot = `sessionSuccess=${String(session.success)} connected=${String(!!session.connected)}`;
       } catch (sessionError) {
         sessionSnapshot = `sessionSnapshotError=${formatUnknownError(sessionError)}`;
       }

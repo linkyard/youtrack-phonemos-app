@@ -387,7 +387,7 @@ exports.httpHandler = {
     {
       scope: 'global',
       method: 'POST',
-      path: 'oauth/session',
+      path: 'oauth/new-session',
       handle: function handle(ctx) {
         const authError = rejectIfUnauthorized(ctx);
         if (authError) {
@@ -474,9 +474,10 @@ exports.httpHandler = {
     },
     {
       scope: 'global',
-      method: 'GET',
-      path: 'oauth/session',
+      method: 'POST',
+      path: 'oauth/ensure-session',
       handle: function handle(ctx) {
+        console.error(ctx);
         const authError = rejectIfUnauthorized(ctx);
         if (authError) {
           return ctx.response.json({success: false, message: authError});
@@ -498,7 +499,7 @@ exports.httpHandler = {
           });
         }
 
-        const accessTokenCheck = phonemosSession.ensureAccessToken();
+        const accessTokenCheck = phonemosSession.ensureAccessToken(ctx, settings);
         if (!accessTokenCheck.ok) {
           return ctx.response.json({success: false, message: accessTokenCheck.message});
         }
