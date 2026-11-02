@@ -61,24 +61,18 @@ function publicSessionResponse(tokens) {
     success: true,
     connected: true,
     expiresAt: tokens.expiresAt != null ? tokens.expiresAt : null,
-    canRefresh: !!tokens.refreshToken,
   };
 }
 
-function publicTokenResponse(mapped, storedTokens) {
+function publicTokenResponse(mapped) {
   if (!mapped || typeof mapped !== 'object') {
     return mapped;
-  }
-  let canRefresh;
-  if (mapped.success) {
-    canRefresh = storedTokens ? !!storedTokens.refreshToken : !!mapped.refreshToken;
   }
   return {
     success: mapped.success,
     message: mapped.message,
     connected: !!mapped.success,
     expiresAt: mapped.expiresAt != null ? mapped.expiresAt : null,
-    canRefresh: canRefresh,
   };
 }
 
@@ -474,8 +468,6 @@ exports.httpHandler = {
             });
           }
           clearLogin(ctx, state);
-          // Do not return refresh tokens to the widget.
-          return ctx.response.json(publicTokenResponse(mapped, tokens));
         }
         return ctx.response.json(publicTokenResponse(mapped));
       },
@@ -484,19 +476,6 @@ exports.httpHandler = {
       scope: 'global',
       method: 'GET',
       path: 'oauth/session',
-      handle: function handle(ctx) {
-        const authError = rejectIfUnauthorized(ctx);
-        if (authError) {
-          return ctx.response.json({success: false, message: authError});
-        }
-        // Never return access/refresh tokens to the browser.
-        return ctx.response.json(publicSessionResponse(readUserTokens(ctx)));
-      },
-    },
-    {
-      scope: 'global',
-      method: 'POST',
-      path: 'oauth/refresh',
       handle: function handle(ctx) {
         const authError = rejectIfUnauthorized(ctx);
         if (authError) {
@@ -519,16 +498,12 @@ exports.httpHandler = {
           });
         }
 
-        // Server-stored refresh token only. A concurrent refresh that already
-        // rotated the token is kept; invalid_grant clears the session.
-        const refreshed = phonemosSession.refreshStoredTokens(ctx, settings);
-        if (!refreshed.ok) {
-          return ctx.response.json({
-            success: false,
-            message: refreshed.message || 'Phonemos session refresh failed. Connect again.',
-          });
+        const accessTokenCheck = phonemosSession.ensureAccessToken();
+        if (!accessTokenCheck.ok) {
+          return ctx.response.json({success: false, message: accessTokenCheck.message});
         }
-        return ctx.response.json(publicSessionResponse(refreshed.tokens));
+
+        return ctx.response.json(publicSessionResponse(readUserTokens(ctx)));
       },
     },
     {

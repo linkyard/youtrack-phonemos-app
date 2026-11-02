@@ -88,46 +88,31 @@ export async function clearPhonemosSession(host: HostAPI): Promise<void> {
   }
 }
 
-async function refreshServerSession(host: HostAPI): Promise<PhonemosSession | null> {
-  const refreshed = await fetchAppOrThrow<TokenResponse>(host, 'backend/oauth/refresh', {
-    method: 'POST',
-    body: {},
-  });
-  const next = sessionFromResponse(refreshed);
-  if (next) {
-    memorySession = next;
-    return next;
-  }
-  return null;
-}
-
-async function fetchSession(host: HostAPI): Promise<PhonemosSession | null> {
-  const session = await fetchAppOrThrow<SessionResponse>(host, 'backend/oauth/session', {method: 'GET'});
-  if (!session.success || !session.connected) {
-    return null;
-  }
-  const fromSession = sessionFromResponse(session);
-  if (fromSession && !isExpired(fromSession)) {
-    memorySession = fromSession;
-    return fromSession;
-  }
-  if (session.canRefresh || fromSession?.canRefresh) {
-    return refreshServerSession(host);
-  }
-  return null;
-}
-
 export async function ensurePhonemosTokens(host: HostAPI): Promise<PhonemosSession | null> {
   if (memorySession?.connected && !isExpired(memorySession)) {
     return memorySession;
   }
 
-  try {
-    const session = await fetchSession(host);
-    if (session) {
-      return session;
+  const storedSession = await fetchAppOrThrow<SessionResponse>(host, 'backend/oauth/session', {method: 'GET'});
+  if (!storedSession.success || !storedSession.connected) {
+    return null;
+  }
+  const fromSession = sessionFromResponse(storedSession);
+  if (fromSession && !isExpired(fromSession)) {
+    memorySession = fromSession;
+    return fromSession;
+  }
+
+  if (storedSession.canRefresh || fromSession?.canRefresh) {
+    const refreshed = await fetchAppOrThrow<TokenResponse>(host, 'backend/oauth/refresh', {
+      method: 'POST',
+      body: {},
+    });
+    const next = sessionFromResponse(refreshed);
+    if (next) {
+      memorySession = next;
+      return next;
     }
-  } catch {
   }
 
   memorySession = null;
