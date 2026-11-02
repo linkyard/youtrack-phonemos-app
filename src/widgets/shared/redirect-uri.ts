@@ -134,15 +134,10 @@ export function deriveOAuthCallbackUrl(): string | null {
   return null;
 }
 
-export function resolveOAuthRedirectUri(configured?: string): string {
+export function resolveOAuthRedirectUri(): string {
   const derived = deriveOAuthCallbackUrl();
   if (derived && isUsableRedirectUri(derived)) {
     return derived;
-  }
-
-  const trimmed = configured?.trim() || '';
-  if (isUsableRedirectUri(trimmed) && /appResources/i.test(trimmed)) {
-    return trimmed;
   }
 
   throw new Error(

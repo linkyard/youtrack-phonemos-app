@@ -11,15 +11,6 @@ export type PhonemosSession = {
   expiresAt: number | null;
 };
 
-type OAuthConfig = {
-  success: boolean;
-  message?: string;
-  clientId?: string;
-  authorizationUrl?: string;
-  redirectUri?: string;
-  phonemosBaseUrl?: string;
-};
-
 type TokenResponse = {
   success: boolean;
   message?: string;
@@ -229,14 +220,9 @@ export async function connectPhonemos(host: HostAPI): Promise<PhonemosSession> {
   try {
     memorySession = null;
 
-    const config = await fetchAppOrThrow<OAuthConfig>(host, 'backend/oauth/config', {method: 'GET'});
-    if (!config.success) {
-      throw new Error(config.message || 'Phonemos OAuth is not configured.');
-    }
-
     let redirectUri: string;
     try {
-      redirectUri = resolveOAuthRedirectUri(config.redirectUri);
+      redirectUri = resolveOAuthRedirectUri();
     } catch (e) {
       throw new Error(
         formatUnknownError(e) + '\n' + getRedirectDebugInfo(),

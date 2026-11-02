@@ -114,21 +114,16 @@ function requestHostHeader(ctx) {
 }
 
 /**
- * Redirect must be the popup callback on this request's host.
- * When OAuth redirect URI is configured, it must match that value exactly.
+ * Redirect must be the popup callback on this request's host — always the one
+ * the widget generated, never an admin-specified override.
  * Returns an error message, or null when the URI is allowed.
  */
-function rejectRedirectUri(ctx, settings, redirectUri) {
+function rejectRedirectUri(ctx, redirectUri) {
   if (!urlSafety.isAllowedOAuthRedirectUri(redirectUri, requestHostHeader(ctx))) {
     return (
       'redirect_uri must be the appResources popup callback on this YouTrack host ' +
       '(…/api/appResources/{id}/widgets/oauth-popup-callback.html).'
     );
-  }
-  const configured =
-    settings && settings.oauthRedirectUri ? String(settings.oauthRedirectUri).trim() : '';
-  if (configured && String(redirectUri).trim() !== configured) {
-    return 'redirect_uri must match the configured OAuth redirect URI.';
   }
   return null;
 }
@@ -147,7 +142,6 @@ function requireSettings(ctx) {
     oauthClientSecret: s.oauthClientSecret,
     oauthAuthorizationUrl: trimSetting(s.oauthAuthorizationUrl),
     oauthTokenUrl: trimSetting(s.oauthTokenUrl),
-    oauthRedirectUri: trimSetting(s.oauthRedirectUri),
     // Phonemos validates Hasura claims in the access token; the OAuth client
     // must assign the "hasura" client scope (Default) or tokens are rejected.
     oauthScope: trimSetting(s.oauthScope) || 'openid profile email offline_access hasura',
@@ -165,6 +159,24 @@ function missingSettings(settings, keys) {
     }
     return settings[key] == null || String(settings[key]).trim() === '';
   });
+}
+
+/**
+ * Load settings and check that the given keys are present and, for URL keys,
+ * safe to use outbound. Call after rejectIfUnauthorized.
+ * @returns {{ok: true, settings: object} | {ok: false, message: string}}
+ */
+function verifySettings(ctx, requiredKeys, urlKeys) {
+  const settings = requireSettings(ctx);
+  const missing = missingSettings(settings, requiredKeys || []);
+  if (missing.length) {
+    return {ok: false, message: 'Missing app settings: ' + missing.join(', ')};
+  }
+  const unsafe = urlSafety.validateOutboundSettings(settings, urlKeys || []);
+  if (unsafe) {
+    return {ok: false, message: unsafe};
+  }
+  return {ok: true, settings: settings};
 }
 
 function parseJsonSafe(response) {
@@ -263,45 +275,6 @@ exports.httpHandler = {
   endpoints: [
     {
       scope: 'global',
-      method: 'GET',
-      path: 'oauth/config',
-      handle: function handle(ctx) {
-        const authError = rejectIfUnauthorized(ctx);
-        if (authError) {
-          return ctx.response.json({success: false, message: authError});
-        }
-        const settings = requireSettings(ctx);
-        const missing = missingSettings(settings, [
-          'phonemosBaseUrl',
-          'oauthClientId',
-          'oauthAuthorizationUrl',
-        ]);
-        if (missing.length) {
-          return ctx.response.json({
-            success: false,
-            message: 'Missing app settings: ' + missing.join(', '),
-          });
-        }
-        const unsafe = urlSafety.validateOutboundSettings(settings, [
-          'phonemosBaseUrl',
-          'oauthAuthorizationUrl',
-          'oauthTokenUrl',
-        ]);
-        if (unsafe) {
-          return ctx.response.json({success: false, message: unsafe});
-        }
-        return ctx.response.json({
-          success: true,
-          clientId: settings.oauthClientId,
-          authorizationUrl: settings.oauthAuthorizationUrl,
-          redirectUri: settings.oauthRedirectUri || '',
-          phonemosBaseUrl: settings.phonemosBaseUrl,
-          popupMessageType: OAUTH_POPUP_MESSAGE_TYPE,
-        });
-      },
-    },
-    {
-      scope: 'global',
       // POST required: storing the PKCE verifier writes user extension properties.
       // YouTrack forbids database modifications from GET extension endpoints.
       method: 'POST',
@@ -311,27 +284,18 @@ exports.httpHandler = {
         if (authError) {
           return ctx.response.json({success: false, message: authError});
         }
+        const settingsCheck = verifySettings(
+          ctx,
+          ['oauthClientId', 'oauthAuthorizationUrl'],
+          ['oauthAuthorizationUrl', 'oauthTokenUrl'],
+        );
+        if (!settingsCheck.ok) {
+          return ctx.response.json({success: false, message: settingsCheck.message});
+        }
+        const settings = settingsCheck.settings;
         const rateError = rejectIfRateLimited(ctx);
         if (rateError) {
           return ctx.response.json({success: false, message: rateError});
-        }
-        const settings = requireSettings(ctx);
-        const missing = missingSettings(settings, [
-          'oauthClientId',
-          'oauthAuthorizationUrl',
-        ]);
-        if (missing.length) {
-          return ctx.response.json({
-            success: false,
-            message: 'Missing app settings: ' + missing.join(', '),
-          });
-        }
-        const unsafe = urlSafety.validateOutboundSettings(settings, [
-          'oauthAuthorizationUrl',
-          'oauthTokenUrl',
-        ]);
-        if (unsafe) {
-          return ctx.response.json({success: false, message: unsafe});
         }
 
         const body = ctx.request.json() || {};
@@ -345,17 +309,14 @@ exports.httpHandler = {
           });
         }
 
-        const redirectUri =
-          body.redirect_uri ||
-          ctx.request.getParameter('redirect_uri') ||
-          settings.oauthRedirectUri;
+        const redirectUri = body.redirect_uri || ctx.request.getParameter('redirect_uri');
         if (!redirectUri) {
           return ctx.response.json({
             success: false,
             message: 'redirect_uri is required.',
           });
         }
-        const redirectError = rejectRedirectUri(ctx, settings, redirectUri);
+        const redirectError = rejectRedirectUri(ctx, redirectUri);
         if (redirectError) {
           return ctx.response.json({success: false, message: redirectError});
         }
@@ -393,23 +354,14 @@ exports.httpHandler = {
         if (authError) {
           return ctx.response.json({success: false, message: authError});
         }
+        const settingsCheck = verifySettings(ctx, ['oauthClientId', 'oauthClientSecret', 'oauthTokenUrl']);
+        if (!settingsCheck.ok) {
+          return ctx.response.json({success: false, message: settingsCheck.message});
+        }
+        const settings = settingsCheck.settings;
         const rateError = rejectIfRateLimited(ctx);
         if (rateError) {
           return ctx.response.json({success: false, message: rateError});
-        }
-    
-        // Settings verification could be exstracted elsewhere
-        const settings = requireSettings(ctx);
-        const missing = missingSettings(settings, [
-          'oauthClientId',
-          'oauthClientSecret',
-          'oauthTokenUrl',
-        ]);
-        if (missing.length) {
-          return ctx.response.json({
-            success: false,
-            message: 'Missing app settings: ' + missing.join(', '),
-          });
         }
 
         const body = ctx.request.json() || {};
@@ -435,7 +387,7 @@ exports.httpHandler = {
             message: 'Login verifier missing. Start Connect again.',
           });
         }
-        const redirectError = rejectRedirectUri(ctx, settings, login.redirectUri);
+        const redirectError = rejectRedirectUri(ctx, login.redirectUri);
         if (redirectError) {
           clearLogin(ctx, state);
           return ctx.response.json({
@@ -477,26 +429,18 @@ exports.httpHandler = {
       method: 'POST',
       path: 'oauth/ensure-session',
       handle: function handle(ctx) {
-        console.error(ctx);
         const authError = rejectIfUnauthorized(ctx);
         if (authError) {
           return ctx.response.json({success: false, message: authError});
         }
+        const settingsCheck = verifySettings(ctx, ['oauthClientId', 'oauthClientSecret', 'oauthTokenUrl']);
+        if (!settingsCheck.ok) {
+          return ctx.response.json({success: false, message: settingsCheck.message});
+        }
+        const settings = settingsCheck.settings;
         const rateError = rejectIfRateLimited(ctx);
         if (rateError) {
           return ctx.response.json({success: false, message: rateError});
-        }
-        const settings = requireSettings(ctx);
-        const missing = missingSettings(settings, [
-          'oauthClientId',
-          'oauthClientSecret',
-          'oauthTokenUrl',
-        ]);
-        if (missing.length) {
-          return ctx.response.json({
-            success: false,
-            message: 'Missing app settings: ' + missing.join(', '),
-          });
         }
 
         const accessTokenCheck = phonemosSession.ensureAccessToken(ctx, settings);

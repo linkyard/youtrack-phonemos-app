@@ -26,7 +26,6 @@ function requireSettings(ctx) {
     oauthClientSecret: s.oauthClientSecret,
     oauthAuthorizationUrl: trimSetting(s.oauthAuthorizationUrl),
     oauthTokenUrl: trimSetting(s.oauthTokenUrl),
-    oauthRedirectUri: trimSetting(s.oauthRedirectUri),
     withinObjectId: normalizeWithinObjectId(s.withinObjectId),
     withinObjectIdRaw: s.withinObjectId == null ? '' : String(s.withinObjectId).trim(),
     searchLimit: s.searchLimit,

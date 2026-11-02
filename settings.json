@@ -39,13 +39,6 @@
       "minLength": 1,
       "x-scope": "GLOBAL"
     },
-    "oauthRedirectUri": {
-      "title": "OAuth redirect URI",
-      "description": "Optional. Leave empty to accept the popup callback derived on this YouTrack host. If set, it must be that exact URL (…/api/appResources/{id}/widgets/oauth-popup-callback.html). In Keycloak allow that URL. https://{youtrack}/api/appResources/* is only a Keycloak test pattern; the app still requires this YouTrack host.",
-      "type": "string",
-      "default": "",
-      "x-scope": "GLOBAL"
-    },
     "oauthScope": {
       "title": "OAuth scopes",
       "description": "Space-separated Keycloak scopes. Must include hasura so the access token carries Phonemos/Hasura claims. Assign the hasura client scope as Default on the Keycloak client.",
