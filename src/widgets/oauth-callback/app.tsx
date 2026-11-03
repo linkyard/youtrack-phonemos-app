@@ -15,6 +15,7 @@ import {
 import {runSearchJob} from '../shared/search-job';
 
 import phonemosLogo from './phonemos-logo-full.svg?url';
+import phonemosLogoDark from './phonemos-logo-full-dark.svg?url';
 
 type Mode = 'checking' | 'home' | 'error';
 
@@ -33,6 +34,13 @@ type SearchResponse = {
   jobId?: string;
   items?: SearchHit[];
 };
+
+const PhonemosLogo = () => (
+  <>
+    <img className="logo logo-light" src={phonemosLogo} alt="Phonemos" width={333} height={72} />
+    <img className="logo logo-dark" src={phonemosLogoDark} alt="Phonemos" width={333} height={72} />
+  </>
+);
 
 const AppComponent: React.FunctionComponent = () => {
   const [mode, setMode] = useState<Mode>('checking');
@@ -196,7 +204,7 @@ const AppComponent: React.FunctionComponent = () => {
   const brandHero = (
     <header className="hero">
       <div className="hero-main">
-        <img className="logo" src={phonemosLogo} alt="Phonemos" width={333} height={72} />
+        <PhonemosLogo/>
         <p className="lead">
           Search your knowledge base from YouTrack. On tickets, Phonemos also suggests articles from
           the issue text.
@@ -212,7 +220,7 @@ const AppComponent: React.FunctionComponent = () => {
         <div className="shell">
           <header className="hero">
             <div className="hero-main">
-              <img className="logo" src={phonemosLogo} alt="Phonemos" width={333} height={72} />
+              <PhonemosLogo/>
             </div>
           </header>
           <div className="panel">

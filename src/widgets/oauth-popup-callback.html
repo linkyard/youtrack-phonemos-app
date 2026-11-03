@@ -4,19 +4,31 @@
     <meta charset="utf-8" />
     <title>Phonemos connect</title>
     <style>
+      :root {
+        color-scheme: light;
+        color: rgb(39, 40, 46);
+        background: rgb(255, 255, 255);
+      }
+      :root.theme-dark {
+        color-scheme: dark;
+        color: rgb(255, 255, 255);
+        background: rgb(30, 31, 34);
+      }
       body {
         font-family: system-ui, sans-serif;
         padding: 24px;
-        color: #1b1b1b;
-        background: #fff;
-      }
-      @media (prefers-color-scheme: dark) {
-        body {
-          color: #f2f2f2;
-          background: #1b1b1b;
-        }
       }
     </style>
+    <script>
+      // The opening widget appends its YouTrack theme to the popup name; fall back to the OS setting.
+      var themeMatch = /^phonemos-oauth-.*-(dark|light)$/.exec(window.name);
+      var isDark = themeMatch
+        ? themeMatch[1] === 'dark'
+        : window.matchMedia('(prefers-color-scheme: dark)').matches;
+      if (isDark) {
+        document.documentElement.classList.add('theme-dark');
+      }
+    </script>
   </head>
   <body>
     <h1>Phonemos</h1>

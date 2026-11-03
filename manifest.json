@@ -19,7 +19,7 @@
       "name": "Suggested knowledge base articles",
       "indexPath": "suggested-kb/index.html",
       "extensionPoint": "ISSUE_ABOVE_ACTIVITY_STREAM",
-      "iconPath": "suggested-kb/widget-icon.png",
+      "iconPath": "shared/phonemos-favicon.svg",
       "description": "Suggests Phonemos articles for the current helpdesk ticket",
       "permissions": ["READ_ISSUE"],
       "expectedDimensions": {
@@ -32,7 +32,7 @@
       "name": "Phonemos search",
       "indexPath": "oauth-callback/index.html",
       "extensionPoint": "MAIN_MENU_ITEM",
-      "iconPath": "oauth-callback/widget-icon.png",
+      "iconPath": "shared/phonemos-favicon.svg",
       "description": "Search the Phonemos knowledge base and manage the connection",
       "showHeader": false
     }

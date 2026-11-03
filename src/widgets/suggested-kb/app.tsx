@@ -15,9 +15,10 @@ import {
 } from './oauth';
 import {runSearchJob} from '../shared/search-job';
 
-function oauthRedirectHint(): string {
+function verifyOauthRedirect(): string {
   try {
-    return 'Keycloak Valid redirect URIs must include:\n' + resolveOAuthRedirectUri();
+    resolveOAuthRedirectUri();
+    return '';
   } catch (e) {
     return e instanceof Error ? e.message : getRedirectDebugInfo();
   }
@@ -130,16 +131,13 @@ const AppComponent: React.FunctionComponent = () => {
 
   return (
     <div className="widget">
-      <div className="header">
-        <h2 className="title">Suggested knowledge base articles</h2>
-        <div className="header-actions">
-          {mode && status === 'ready' && <span className="mode">{mode}</span>}
-          {connected && (
-            <Button text onClick={() => void onDisconnect()}>
-              Disconnect
-            </Button>
-          )}
-        </div>
+      <div className="header-actions">
+        {mode && status === 'ready' && <span className="mode">{mode}</span>}
+        {connected && (
+          <Button text onClick={() => void onDisconnect()}>
+            Disconnect
+          </Button>
+        )}
       </div>
 
       {status === 'loading' && (
@@ -158,7 +156,7 @@ const AppComponent: React.FunctionComponent = () => {
             Connect to Phonemos
           </Button>
           <p className="muted" style={{whiteSpace: 'pre-wrap', fontSize: '11px'}}>
-            {oauthRedirectHint()}
+            {verifyOauthRedirect()}
           </p>
         </div>
       )}

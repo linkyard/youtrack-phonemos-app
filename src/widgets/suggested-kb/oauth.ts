@@ -62,6 +62,10 @@ function isExpired(session: PhonemosSession): boolean {
   return Boolean(session.expiresAt && session.expiresAt <= Date.now());
 }
 
+function youTrackTheme(): 'dark' | 'light' {
+  return document.querySelector('.ring-ui-theme-dark') ? 'dark' : 'light';
+}
+
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => window.setTimeout(resolve, ms));
 }
@@ -264,7 +268,9 @@ export async function connectPhonemos(host: HostAPI): Promise<PhonemosSession> {
     // Unique name each attempt. Reusing a fixed name after the callback navigates
     // the previous popup to about:blank can leave Chromium with an empty window
     // that never loads the authorize URL (disconnect → connect hang).
-    const popupName = `phonemos-oauth-${state.slice(0, 12)}`;
+    // oauth-popup-callback.html reads the theme suffix from window.name, which
+    // browsers keep across the Keycloak redirect because the popup has an opener.
+    const popupName = `phonemos-oauth-${state.slice(0, 12)}-${youTrackTheme()}`;
     const popup = window.open(authorize.url, popupName, 'width=480,height=720');
     if (!popup) {
       throw new Error(['Pop-up blocked. Allow pop-ups for YouTrack to connect Phonemos.', ...debug].join('\n'));

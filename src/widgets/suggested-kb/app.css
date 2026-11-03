@@ -8,10 +8,7 @@
 }
 
 .header {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: var(--ring-unit);
+  padding-top: var(--ring-font-size);
 }
 
 .header-actions {
@@ -19,12 +16,8 @@
   align-items: center;
   gap: var(--ring-unit);
   flex-shrink: 0;
-}
-
-.title {
-  margin: 0;
-  font: var(--ring-heading-font);
-  font-size: var(--ring-font-size);
+  position: absolute;
+  right: calc(2* var(--ring-unit));
 }
 
 .mode {
@@ -86,6 +79,7 @@
   list-style: none;
   margin: 0;
   padding: 0;
+  padding-top: var(--ring-font-size);
   display: flex;
   flex-direction: column;
   gap: calc(var(--ring-unit) * 1.5);
