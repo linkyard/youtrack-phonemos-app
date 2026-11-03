@@ -13,6 +13,7 @@ import {
   PhonemosConnectionError,
   resolveOAuthRedirectUri,
 } from './oauth';
+import {runSearchJob} from '../shared/search-job';
 
 function oauthRedirectHint(): string {
   try {
@@ -33,6 +34,8 @@ type SuggestionsResponse = {
   success: boolean;
   message?: string;
   needsAuth?: boolean;
+  pending?: boolean;
+  jobId?: string;
   mode?: string;
   items?: SuggestionItem[];
 };
@@ -63,8 +66,7 @@ const AppComponent: React.FunctionComponent = () => {
         return;
       }
       setConnected(true);
-      const response = await host.fetchApp<SuggestionsResponse>('suggestions/list', {
-        method: 'POST',
+      const response = await runSearchJob<SuggestionsResponse>(host, 'suggestions/list', 'suggestions/result', {
         scope: true,
         body: {},
       });

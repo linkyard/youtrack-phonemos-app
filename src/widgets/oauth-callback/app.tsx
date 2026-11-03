@@ -12,6 +12,7 @@ import {
   formatUnknownError,
   PhonemosConnectionError,
 } from '../suggested-kb/oauth';
+import {runSearchJob} from '../shared/search-job';
 
 import phonemosLogo from './phonemos-logo-full.svg?url';
 
@@ -28,6 +29,8 @@ type SearchResponse = {
   success: boolean;
   message?: string;
   needsAuth?: boolean;
+  pending?: boolean;
+  jobId?: string;
   items?: SearchHit[];
 };
 
@@ -143,8 +146,7 @@ const AppComponent: React.FunctionComponent = () => {
     setHits([]);
     try {
       // MAIN_MENU_ITEM defaults fetchApp to user scope — force global for kb-search.
-      const response = await host.fetchApp<SearchResponse>('kb-search/query', {
-        method: 'POST',
+      const response = await runSearchJob<SearchResponse>(host, 'kb-search/query', 'kb-search/result', {
         scope: false,
         body: {q},
       });

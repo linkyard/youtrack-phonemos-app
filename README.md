@@ -82,6 +82,8 @@ Both searches call `POST {phonemosBaseUrl}/_api/rest/v1/objects-search` and stop
 2. Fulltext, `wikipage` only, on the first query
 3. Hybrid with no type filter, on the first query
 
+The search endpoints (`suggestions/list`, `kb-search/query`) do not call Phonemos themselves. They validate the request, schedule an async function (`ctx.invokeAsync`, YouTrack 2026.2+), and return `{pending: true, jobId}`, so no HTTP request thread waits on Phonemos or Keycloak. The async function runs the token refresh and searches, then stores the response for up to 5 minutes on the YouTrack User (`phonemosSearchJobs`). The widget polls `suggestions/result` or `kb-search/result` for it.
+
 #### Ticket suggestions
 
 The issue-scoped handler builds these queries from the ticket (markup stripped, each clipped to 3500 characters):

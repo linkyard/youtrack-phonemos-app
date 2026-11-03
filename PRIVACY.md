@@ -29,6 +29,8 @@ After a user chooses **Connect to Phonemos** on a ticket, or **Connect** on the 
 
 **Menu search.** The Phonemos item in the YouTrack main menu lets a connected user type a search query. That query, limited to 500 characters, is sent to the same Phonemos site. The app first asks Phonemos which site it is (`GET /_api/rest/v1/sites/self`) and searches within that site, so the project search root is not used. Results are the pages that user can access (title, extract, and link). The app does not write those results back to Phonemos.
 
+**Temporary results.** Both searches run in the background after the request is accepted. YouTrack keeps the latest results (and, for ticket search, the queries that produced them) on that user for up to 5 minutes so the widget can pick them up. Only that user can read them.
+
 The app does not sell personal data and does not use ticket content or search queries for advertising, training, or product analytics.
 
 ## 3 Legal basis

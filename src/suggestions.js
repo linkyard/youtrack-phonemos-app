@@ -1,9 +1,11 @@
 /**
- * Issue-scoped suggestions endpoint.
+ * Issue-scoped suggestions endpoints.
  * Global OAuth endpoints live in backend.js (YouTrack forbids mixing scopes in one handler).
+ * `list` starts the search as an async function and returns a job id; the widget polls `result`.
  */
 const http = require('@jetbrains/youtrack-scripting-api/http');
 const phonemosSession = require('./phonemos-session');
+const searchJobs = require('./search-jobs');
 const urlSafety = require('./url-safety');
 
 const MAX_QUERY_CHARS = 3500;
@@ -466,6 +468,50 @@ function searchText(settings, accessToken, query) {
   return runSearchStrategies(settings, accessToken, [{label: 'query', q: q}]);
 }
 
+/** Runs in the runSearch async function; returns the widget response. */
+function searchIssue(ctx, settings, queries) {
+  // Ignore any client-supplied accessToken — always use the server-side session
+  // for the current YouTrack user (prevents token substitution / proxy abuse).
+  const session = phonemosSession.ensureAccessToken(ctx, settings);
+  if (!session.ok) {
+    return {
+      success: false,
+      needsAuth: true,
+      message: session.message || 'Connect to Phonemos first.',
+    };
+  }
+
+  const result = runSearchStrategies(settings, session.accessToken, queries);
+  if (!result.success) {
+    const err = result.lastError || {};
+    let message = 'Phonemos search failed with status ' + err.code + '.';
+    if (err.code === 401) {
+      phonemosSession.disconnectUser(ctx, settings);
+      message +=
+        '\n\nPhonemos rejected the access token. In OAuth, open this app’s client → Client scopes ' +
+        'and assign the realm scope "hasura" as Default (it adds the Hasura claims Phonemos requires). ' +
+        'Also request scope "hasura" (app setting OAuth scopes). Then disconnect/reconnect in the widget.';
+    }
+    return {
+      success: false,
+      needsAuth: err.code === 401,
+      message: message,
+      attempts: result.attempts || [],
+      within: settings.withinObjectId,
+    };
+  }
+
+  return {
+    success: true,
+    query: result.query,
+    queryLabel: result.queryLabel,
+    mode: result.mode,
+    items: result.items,
+    within: result.within,
+    attempts: result.attempts,
+  };
+}
+
 exports.normalizeWithinObjectId = normalizeWithinObjectId;
 exports.resolveSiteObjectId = resolveSiteObjectId;
 exports.searchText = searchText;
@@ -505,17 +551,9 @@ exports.httpHandler = {
           });
         }
 
-        // Ignore any client-supplied accessToken — always use the server-side session
-        // for the current YouTrack user (prevents token substitution / proxy abuse).
-        const session = phonemosSession.ensureAccessToken(ctx, settings);
-        if (!session.ok) {
-          return ctx.response.json({
-            success: false,
-            needsAuth: true,
-            message: session.message || 'Connect to Phonemos first.',
-          });
+        if (!phonemosSession.readUserTokens(ctx)) {
+          return ctx.response.json({success: false, needsAuth: true, message: 'Connect to Phonemos first.'});
         }
-        const accessToken = session.accessToken;
 
         const queries = buildSearchQueries(ctx.issue);
         if (!queries.length) {
@@ -529,36 +567,40 @@ exports.httpHandler = {
           });
         }
 
-        const result = runSearchStrategies(settings, accessToken, queries);
-        if (!result.success) {
-          const err = result.lastError || {};
-          let message = 'Phonemos search failed with status ' + err.code + '.';
-          if (err.code === 401) {
-            phonemosSession.disconnectUser(ctx, settings);
-            message +=
-              '\n\nPhonemos rejected the access token. In OAuth, open this app’s client → Client scopes ' +
-              'and assign the realm scope "hasura" as Default (it adds the Hasura claims Phonemos requires). ' +
-              'Also request scope "hasura" (app setting OAuth scopes). Then disconnect/reconnect in the widget.';
-          }
-          return ctx.response.json({
-            success: false,
-            needsAuth: err.code === 401,
-            message: message,
-            attempts: result.attempts || [],
-            within: settings.withinObjectId,
-          });
+        const jobId = searchJobs.createJob(ctx);
+        if (!jobId) {
+          return ctx.response.json({success: false, message: 'Unable to start the Phonemos search.'});
         }
-
-        return ctx.response.json({
-          success: true,
-          query: result.query,
-          queryLabel: result.queryLabel,
-          mode: result.mode,
-          items: result.items,
-          within: result.within,
-          attempts: result.attempts,
-        });
+        // ctx.store takes primitives only and must run before invokeAsync.
+        ctx.store('jobId', jobId);
+        ctx.store('withinObjectId', settings.withinObjectId);
+        ctx.store('queries', JSON.stringify(queries));
+        ctx.invokeAsync('runSearch');
+        return ctx.response.json({success: true, pending: true, jobId: jobId});
+      },
+    },
+    {
+      scope: 'issue',
+      method: 'GET',
+      path: 'result',
+      permissions: ['READ_ISSUE'],
+      handle: function handle(ctx) {
+        return ctx.response.json(searchJobs.readResult(ctx, ctx.request.getParameter('jobId')));
       },
     },
   ],
+  asyncFunctions: {
+    runSearch: function (ctx) {
+      const jobId = ctx.load('jobId');
+      let payload;
+      try {
+        const settings = requireSettings(ctx);
+        settings.withinObjectId = ctx.load('withinObjectId');
+        payload = searchIssue(ctx, settings, JSON.parse(ctx.load('queries')));
+      } catch (e) {
+        payload = {success: false, message: 'Phonemos search failed unexpectedly.'};
+      }
+      searchJobs.finishJob(ctx, jobId, payload);
+    },
+  },
 };

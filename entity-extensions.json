@@ -25,6 +25,9 @@
         },
         "phonemosOAuthRate": {
           "type": "string"
+        },
+        "phonemosSearchJobs": {
+          "type": "string"
         }
       }
     }
