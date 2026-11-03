@@ -7,6 +7,9 @@ const phonemosSession = require('./phonemos-session');
 const urlSafety = require('./url-safety');
 
 const OAUTH_POPUP_MESSAGE_TYPE = 'phonemos:oauth';
+// Phonemos validates Hasura claims in the access token; the Keycloak client
+// must assign the "hasura" client scope (Default) or tokens are rejected.
+const OAUTH_SCOPE = 'openid profile email offline_access hasura';
 
 function trimTrailingSlash(url) {
   return String(url || '').replace(/\/+$/, '');
@@ -134,17 +137,18 @@ function trimSetting(value) {
 
 function requireSettings(ctx) {
   const s = ctx.settings || {};
+  const keycloak = urlSafety.keycloakEndpoints(s.keycloakBaseUrl);
   return {
     phonemosBaseUrl: trimTrailingSlash(s.phonemosBaseUrl),
     oauthClientId: trimSetting(s.oauthClientId),
     // Pass the secret setting through untouched — YouTrack injects it only in
     // http.Connection basicAuth/addHeader; stringifying/trimming breaks that.
     oauthClientSecret: s.oauthClientSecret,
-    oauthAuthorizationUrl: trimSetting(s.oauthAuthorizationUrl),
-    oauthTokenUrl: trimSetting(s.oauthTokenUrl),
-    // Phonemos validates Hasura claims in the access token; the OAuth client
-    // must assign the "hasura" client scope (Default) or tokens are rejected.
-    oauthScope: trimSetting(s.oauthScope) || 'openid profile email offline_access hasura',
+    keycloakBaseUrl: urlSafety.normalizeKeycloakBaseUrl(s.keycloakBaseUrl),
+    oauthAuthorizationUrl: keycloak.authorizationUrl,
+    oauthTokenUrl: keycloak.tokenUrl,
+    oauthRevokeUrl: keycloak.revokeUrl,
+    oauthUserInfoUrl: keycloak.userInfoUrl,
     oauthVerifyNameMatch: s.oauthVerifyNameMatch !== false,
     oauthVerifyEmailMatch: s.oauthVerifyEmailMatch !== false,
     withinObjectId: trimSetting(s.withinObjectId),
@@ -161,11 +165,6 @@ function missingSettings(settings, keys) {
   });
 }
 
-/**
- * Load settings and check that the given keys are present and, for URL keys,
- * safe to use outbound. Call after rejectIfUnauthorized.
- * @returns {{ok: true, settings: object} | {ok: false, message: string}}
- */
 function verifySettings(ctx, requiredKeys, urlKeys) {
   const settings = requireSettings(ctx);
   const missing = missingSettings(settings, requiredKeys || []);
@@ -201,7 +200,7 @@ function describeHttpResponse(serviceResponse) {
 }
 
 function exchangeToken(settings, formFields) {
-  const unsafe = urlSafety.validateOutboundSettings(settings, ['oauthTokenUrl']);
+  const unsafe = urlSafety.validateOutboundSettings(settings, ['keycloakBaseUrl']);
   if (unsafe) {
     return {isSuccess: false, code: 0, body: unsafe};
   }
@@ -286,8 +285,8 @@ exports.httpHandler = {
         }
         const settingsCheck = verifySettings(
           ctx,
-          ['oauthClientId', 'oauthAuthorizationUrl'],
-          ['oauthAuthorizationUrl', 'oauthTokenUrl'],
+          ['oauthClientId', 'keycloakBaseUrl'],
+          ['keycloakBaseUrl'],
         );
         if (!settingsCheck.ok) {
           return ctx.response.json({success: false, message: settingsCheck.message});
@@ -330,7 +329,7 @@ exports.httpHandler = {
           'response_type=code',
           'client_id=' + encodeURIComponent(settings.oauthClientId),
           'redirect_uri=' + encodeURIComponent(redirectUri),
-          'scope=' + encodeURIComponent(settings.oauthScope),
+          'scope=' + encodeURIComponent(OAUTH_SCOPE),
           'state=' + encodeURIComponent(state),
           'code_challenge=' + encodeURIComponent(codeChallenge),
           'code_challenge_method=S256',
@@ -354,7 +353,11 @@ exports.httpHandler = {
         if (authError) {
           return ctx.response.json({success: false, message: authError});
         }
-        const settingsCheck = verifySettings(ctx, ['oauthClientId', 'oauthClientSecret', 'oauthTokenUrl']);
+        const settingsCheck = verifySettings(
+          ctx,
+          ['oauthClientId', 'oauthClientSecret', 'keycloakBaseUrl'],
+          ['keycloakBaseUrl'],
+        );
         if (!settingsCheck.ok) {
           return ctx.response.json({success: false, message: settingsCheck.message});
         }
@@ -433,7 +436,11 @@ exports.httpHandler = {
         if (authError) {
           return ctx.response.json({success: false, message: authError});
         }
-        const settingsCheck = verifySettings(ctx, ['oauthClientId', 'oauthClientSecret', 'oauthTokenUrl']);
+        const settingsCheck = verifySettings(
+          ctx,
+          ['oauthClientId', 'oauthClientSecret', 'keycloakBaseUrl'],
+          ['keycloakBaseUrl'],
+        );
         if (!settingsCheck.ok) {
           return ctx.response.json({success: false, message: settingsCheck.message});
         }

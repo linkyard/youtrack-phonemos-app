@@ -39,8 +39,6 @@ export function waitForOAuthResult(
         return;
       }
 
-      console.log("message", event);
-
       const fromPopup = Boolean(popup && event.source === popup);
       const fromHost = Boolean(hostOrigin && event.origin === hostOrigin);
       if (!fromPopup && !fromHost) {

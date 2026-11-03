@@ -6,7 +6,7 @@
   "properties": {
     "phonemosBaseUrl": {
       "title": "Phonemos base URL",
-      "description": "Base URL of the Phonemos instance, e.g. https://wiki.example.com (https required; http only for localhost)",
+      "description": "Base URL of the Phonemos instance, e.g. https://wiki.example.com",
       "type": "string",
       "minLength": 1,
       "x-scope": "GLOBAL"
@@ -25,25 +25,10 @@
       "format": "secret",
       "x-scope": "GLOBAL"
     },
-    "oauthAuthorizationUrl": {
-      "title": "OAuth authorization URL",
-      "description": "Keycloak authorization endpoint, e.g. …/protocol/openid-connect/auth (https; same host as token URL)",
+    "keycloakBaseUrl": {
+      "title": "Keycloak base URL",
+      "description": "Keycloak realm URL: http(s)://{keycloak-host}/realms/{realm} (older Keycloak: http(s)://{keycloak-host}/auth/realms/{realm}). The app appends /protocol/openid-connect/{auth|token|userinfo|revoke}.",
       "type": "string",
-      "minLength": 1,
-      "x-scope": "GLOBAL"
-    },
-    "oauthTokenUrl": {
-      "title": "OAuth token URL",
-      "description": "Keycloak token endpoint, e.g. …/protocol/openid-connect/token (https; same host as authorization URL)",
-      "type": "string",
-      "minLength": 1,
-      "x-scope": "GLOBAL"
-    },
-    "oauthScope": {
-      "title": "OAuth scopes",
-      "description": "Space-separated Keycloak scopes. Must include hasura so the access token carries Phonemos/Hasura claims. Assign the hasura client scope as Default on the Keycloak client.",
-      "type": "string",
-      "default": "openid profile email offline_access hasura",
       "minLength": 1,
       "x-scope": "GLOBAL"
     },
@@ -82,8 +67,7 @@
     "phonemosBaseUrl",
     "oauthClientId",
     "oauthClientSecret",
-    "oauthAuthorizationUrl",
-    "oauthTokenUrl",
+    "keycloakBaseUrl",
     "withinObjectId"
   ]
 }

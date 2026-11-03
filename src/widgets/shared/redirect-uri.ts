@@ -1,6 +1,6 @@
 /**
  * YouTrack serves packaged widget files at:
- *   https://{host}/api/appResources/{appInstallId}/widgets/...
+ *   https://{host}[{contextPath}]/api/appResources/{appInstallId}/widgets/...
  * See JT-90146 — use that URL as OAuth redirect_uri (not /app/... and not about:srcdoc).
  */
 export const OAUTH_POPUP_CALLBACK_FILE = 'oauth-popup-callback.html';

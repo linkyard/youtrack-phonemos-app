@@ -67,13 +67,9 @@ function normalizeIdentity(value) {
  * implement in this script sandbox and strictly more trustworthy.)
  */
 function fetchUserInfo(settings, accessToken) {
-  const userInfoUrl = urlSafety.userInfoUrlFromTokenUrl(settings.oauthTokenUrl);
+  const userInfoUrl = settings.oauthUserInfoUrl;
   if (!userInfoUrl) {
     return {ok: false, message: 'Userinfo endpoint unavailable.'};
-  }
-  const checked = urlSafety.validateHttpsUrl(userInfoUrl, 'OAuth userinfo URL');
-  if (!checked.ok) {
-    return {ok: false, message: checked.message};
   }
   const slash = userInfoUrl.indexOf('/', userInfoUrl.indexOf('://') + 3);
   const origin = slash === -1 ? userInfoUrl : userInfoUrl.substring(0, slash);
@@ -278,7 +274,7 @@ function parseJsonSafe(response) {
 }
 
 function exchangeRefreshToken(settings, refreshToken) {
-  const unsafe = urlSafety.validateOutboundSettings(settings, ['oauthTokenUrl']);
+  const unsafe = urlSafety.validateOutboundSettings(settings, ['keycloakBaseUrl']);
   if (unsafe) {
     return {isSuccess: false, code: 0, body: unsafe};
   }
@@ -307,15 +303,10 @@ function exchangeRefreshToken(settings, refreshToken) {
 }
 
 function revokeRefreshToken(settings, refreshToken) {
-  const revokeUrl = urlSafety.revokeUrlFromTokenUrl(settings.oauthTokenUrl);
+  const revokeUrl = settings.oauthRevokeUrl;
   if (!revokeUrl || !refreshToken) {
     return {ok: false, message: 'Revocation endpoint unavailable.'};
   }
-  const unsafe = urlSafety.validateHttpsUrl(revokeUrl, 'OAuth revocation URL');
-  if (!unsafe.ok) {
-    return {ok: false, message: unsafe.message};
-  }
-  // Auth/token hosts must match; revoke is derived from token URL so same host.
   const slash = revokeUrl.indexOf('/', revokeUrl.indexOf('://') + 3);
   const origin = slash === -1 ? revokeUrl : revokeUrl.substring(0, slash);
   const path = slash === -1 ? '/' : revokeUrl.substring(slash);

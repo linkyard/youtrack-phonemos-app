@@ -312,7 +312,7 @@ export async function connectPhonemos(host: HostAPI): Promise<PhonemosSession> {
       });
     } catch (e) {
 
-      console.log("error", e);
+      console.log("An error ocurred:", e);
       let sessionSnapshot = 'sessionSnapshot=(unreadable)';
       try {
         const session = await fetchAppOrThrow<SessionResponse>(host, 'backend/oauth/ensure-session', {method: 'POST', body: {}});

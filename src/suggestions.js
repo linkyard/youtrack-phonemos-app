@@ -19,23 +19,20 @@ function trimSetting(value) {
 
 function requireSettings(ctx) {
   const s = ctx.settings || {};
+  const keycloak = urlSafety.keycloakEndpoints(s.keycloakBaseUrl);
   return {
     phonemosBaseUrl: trimTrailingSlash(s.phonemosBaseUrl),
     oauthClientId: trimSetting(s.oauthClientId),
     // Do not trim/stringify — YouTrack secret settings must be passed through to http.basicAuth.
     oauthClientSecret: s.oauthClientSecret,
-    oauthAuthorizationUrl: trimSetting(s.oauthAuthorizationUrl),
-    oauthTokenUrl: trimSetting(s.oauthTokenUrl),
+    keycloakBaseUrl: urlSafety.normalizeKeycloakBaseUrl(s.keycloakBaseUrl),
+    oauthAuthorizationUrl: keycloak.authorizationUrl,
+    oauthTokenUrl: keycloak.tokenUrl,
+    oauthRevokeUrl: keycloak.revokeUrl,
     withinObjectId: normalizeWithinObjectId(s.withinObjectId),
     withinObjectIdRaw: s.withinObjectId == null ? '' : String(s.withinObjectId).trim(),
     searchLimit: s.searchLimit,
   };
-}
-
-function missingSettings(settings, keys) {
-  return keys.filter(function (key) {
-    return settings[key] == null || String(settings[key]).trim() === '';
-  });
 }
 
 function parseJsonSafe(response) {
@@ -490,7 +487,7 @@ exports.httpHandler = {
         }
         const unsafe = urlSafety.validateOutboundSettings(settings, [
           'phonemosBaseUrl',
-          'oauthTokenUrl',
+          'keycloakBaseUrl',
         ]);
         if (unsafe) {
           return ctx.response.json({success: false, message: unsafe});

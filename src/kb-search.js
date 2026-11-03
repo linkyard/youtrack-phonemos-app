@@ -19,11 +19,14 @@ function trimSetting(value) {
 
 function menuSettings(ctx) {
   const s = ctx.settings || {};
+  const keycloak = urlSafety.keycloakEndpoints(s.keycloakBaseUrl);
   return {
     phonemosBaseUrl: trimTrailingSlash(s.phonemosBaseUrl),
     oauthClientId: trimSetting(s.oauthClientId),
     oauthClientSecret: s.oauthClientSecret,
-    oauthTokenUrl: trimSetting(s.oauthTokenUrl),
+    keycloakBaseUrl: urlSafety.normalizeKeycloakBaseUrl(s.keycloakBaseUrl),
+    oauthTokenUrl: keycloak.tokenUrl,
+    oauthRevokeUrl: keycloak.revokeUrl,
     withinObjectId: null,
     searchLimit: 10,
   };
@@ -50,7 +53,7 @@ exports.httpHandler = {
         }
         const unsafe = urlSafety.validateOutboundSettings(settings, [
           'phonemosBaseUrl',
-          'oauthTokenUrl',
+          'keycloakBaseUrl',
         ]);
         if (unsafe) {
           return ctx.response.json({success: false, message: unsafe});
