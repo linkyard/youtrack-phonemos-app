@@ -1,10 +1,8 @@
 /**
  * Per-user Phonemos OAuth state (User extension properties).
  * Tokens, in-flight login, and rate limits stay off shared AppGlobalStorage.
- * Legacy global maps are nulled once from POST handlers and are not used for auth.
  */
-const http = require('@jetbrains/youtrack-scripting-api/http');
-const urlSafety = require('./url-safety');
+const oauthApi = require('./oauth-api');
 
 const OAUTH_TTL_MS = 5 * 60 * 1000;
 const OAUTH_RATE_WINDOW_MS = 10 * 60 * 1000;
@@ -66,33 +64,6 @@ function normalizeIdentity(value) {
  * but without checking the signature — asking OAuth live is both simpler to
  * implement in this script sandbox and strictly more trustworthy.)
  */
-function fetchUserInfo(settings, accessToken) {
-  const userInfoUrl = settings.oauthUserInfoUrl;
-  if (!userInfoUrl) {
-    return {ok: false, message: 'Userinfo endpoint unavailable.'};
-  }
-  const slash = userInfoUrl.indexOf('/', userInfoUrl.indexOf('://') + 3);
-  const origin = slash === -1 ? userInfoUrl : userInfoUrl.substring(0, slash);
-  const path = slash === -1 ? '/' : userInfoUrl.substring(slash);
-
-  try {
-    const connection = new http.Connection(origin);
-    connection.addHeader('Authorization', 'Bearer ' + accessToken);
-    connection.addHeader('Accept', 'application/json');
-    const response = connection.getSync(path, null);
-    if (!response || !response.isSuccess) {
-      return {ok: false, message: 'Userinfo request failed.'};
-    }
-    const claims = parseJsonSafe(response);
-    if (!claims || typeof claims !== 'object') {
-      return {ok: false, message: 'Userinfo response was not valid JSON.'};
-    }
-    return {ok: true, claims: claims};
-  } catch (e) {
-    return {ok: false, message: 'Userinfo request failed.'};
-  }
-}
-
 function verifyIdentity(ctx, settings, accessToken) {
   const requireName = settings.oauthVerifyNameMatch !== false;
   const requireEmail = settings.oauthVerifyEmailMatch !== false;
@@ -100,7 +71,7 @@ function verifyIdentity(ctx, settings, accessToken) {
     return {ok: true};
   }
 
-  const info = fetchUserInfo(settings, accessToken);
+  const info = oauthApi.fetchUserInfo(settings, accessToken);
   if (!info.ok) {
     return {ok: false, message: 'Unable to verify the Phonemos identity for this connection (' + info.message + ').'};
   }
@@ -124,9 +95,8 @@ function verifyIdentity(ctx, settings, accessToken) {
   if (errors.length !== 0) {
     errors.push('This is required by the app\'s global settings.');
     return {ok: false, message: errors.join(' ')};
-  } else {
-    return {ok: true};
   }
+  return {ok: true};
 }
 
 function parseJsonObject(raw) {
@@ -166,7 +136,6 @@ function writeUserTokens(ctx, tokens) {
     accessToken: String(tokens.accessToken),
     refreshToken: tokens.refreshToken ? String(tokens.refreshToken) : null,
     expiresAt: tokens.expiresAt != null ? Number(tokens.expiresAt) : null,
-    ts: Date.now(),
   });
   return true;
 }
@@ -254,7 +223,6 @@ function consumeOAuthRateLimit(ctx) {
   props.phonemosOAuthRate = JSON.stringify({
     windowStart: windowStart,
     count: count,
-    ts: now,
   });
   if (count > OAUTH_RATE_MAX) {
     return {
@@ -265,81 +233,11 @@ function consumeOAuthRateLimit(ctx) {
   return {ok: true};
 }
 
-function parseJsonSafe(response) {
-  try {
-    return response.json();
-  } catch (e) {
-    return null;
-  }
-}
-
-function exchangeRefreshToken(settings, refreshToken) {
-  const unsafe = urlSafety.validateOutboundSettings(settings, ['keycloakBaseUrl']);
-  if (unsafe) {
-    return {isSuccess: false, code: 0, body: unsafe};
-  }
-  const tokenUrl = settings.oauthTokenUrl;
-  const slash = tokenUrl.indexOf('/', tokenUrl.indexOf('://') + 3);
-  const origin = slash === -1 ? tokenUrl : tokenUrl.substring(0, slash);
-  const path = slash === -1 ? '/' : tokenUrl.substring(slash);
-
-  const fields = {
-    grant_type: 'refresh_token',
-    refresh_token: refreshToken,
-    client_id: settings.oauthClientId,
-  };
-  const bodyParts = [];
-  Object.keys(fields).forEach(function (key) {
-    if (fields[key] != null) {
-      bodyParts.push(encodeURIComponent(key) + '=' + encodeURIComponent(String(fields[key])));
-    }
-  });
-
-  const connection = new http.Connection(origin);
-  connection.basicAuth(settings.oauthClientId, settings.oauthClientSecret);
-  connection.addHeader('Content-Type', 'application/x-www-form-urlencoded');
-  connection.addHeader('Accept', 'application/json');
-  return connection.postSync(path, null, bodyParts.join('&'));
-}
-
-function revokeRefreshToken(settings, refreshToken) {
-  const revokeUrl = settings.oauthRevokeUrl;
-  if (!revokeUrl || !refreshToken) {
-    return {ok: false, message: 'Revocation endpoint unavailable.'};
-  }
-  const slash = revokeUrl.indexOf('/', revokeUrl.indexOf('://') + 3);
-  const origin = slash === -1 ? revokeUrl : revokeUrl.substring(0, slash);
-  const path = slash === -1 ? '/' : revokeUrl.substring(slash);
-
-  const body =
-    'token=' +
-    encodeURIComponent(String(refreshToken)) +
-    '&token_type_hint=refresh_token' +
-    '&client_id=' +
-    encodeURIComponent(String(settings.oauthClientId));
-
-  try {
-    const connection = new http.Connection(origin);
-    connection.basicAuth(settings.oauthClientId, settings.oauthClientSecret);
-    connection.addHeader('Content-Type', 'application/x-www-form-urlencoded');
-    connection.addHeader('Accept', 'application/json');
-    const response = connection.postSync(path, null, body);
-    return {ok: !!(response && (response.isSuccess || response.code === 200 || response.code === 204))};
-  } catch (e) {
-    return {ok: false, message: 'Revocation request failed.'};
-  }
-}
-
 function accessTokenStillUsable(tokens) {
   if (!tokens || !tokens.accessToken) {
     return false;
   }
   return !(tokens.expiresAt && tokens.expiresAt <= Date.now());
-}
-
-function isInvalidGrant(serviceResponse) {
-  const data = parseJsonSafe(serviceResponse);
-  return !!(data && String(data.error) === 'invalid_grant');
 }
 
 function concurrentRefreshWon(latest, sentRefreshToken) {
@@ -376,7 +274,10 @@ function refreshStoredTokens(ctx, settings) {
   const sentRefreshToken = tokens.refreshToken;
   let serviceResponse = null;
   try {
-    serviceResponse = exchangeRefreshToken(settings, sentRefreshToken);
+    serviceResponse = oauthApi.exchangeToken(settings, {
+      grant_type: 'refresh_token',
+      refresh_token: sentRefreshToken,
+    });
   } catch (e) {
     const latest = readUserTokens(ctx);
     if (concurrentRefreshWon(latest, sentRefreshToken)) {
@@ -394,8 +295,9 @@ function refreshStoredTokens(ctx, settings) {
     return {ok: true, accessToken: latest.accessToken, tokens: latest};
   }
 
-  if (!serviceResponse || !serviceResponse.isSuccess) {
-    if (isInvalidGrant(serviceResponse)) {
+  const mapped = oauthApi.mapTokenResponse(serviceResponse);
+  if (!mapped.success || !mapped.accessToken) {
+    if (oauthApi.isInvalidGrant(serviceResponse)) {
       const again = readUserTokens(ctx);
       if (concurrentRefreshWon(again, sentRefreshToken)) {
         return {ok: true, accessToken: again.accessToken, tokens: again};
@@ -411,24 +313,10 @@ function refreshStoredTokens(ctx, settings) {
     };
   }
 
-  const data = parseJsonSafe(serviceResponse);
-  if (!data || !data.access_token) {
-    const again = readUserTokens(ctx);
-    if (concurrentRefreshWon(again, sentRefreshToken)) {
-      return {ok: true, accessToken: again.accessToken, tokens: again};
-    }
-    return {
-      ok: false,
-      reason: 'refresh_failed',
-      message: 'Phonemos session refresh failed. Connect again.',
-    };
-  }
-
-  const expiresIn = data.expires_in != null ? Number(data.expires_in) : null;
   const next = {
-    accessToken: data.access_token,
-    refreshToken: data.refresh_token || sentRefreshToken,
-    expiresAt: expiresIn ? Date.now() + expiresIn * 1000 - 30 * 1000 : null,
+    accessToken: mapped.accessToken,
+    refreshToken: mapped.refreshToken || sentRefreshToken,
+    expiresAt: mapped.expiresAt,
   };
   const beforeWrite = readUserTokens(ctx);
   if (concurrentRefreshWon(beforeWrite, sentRefreshToken)) {
@@ -458,7 +346,7 @@ function disconnectUser(ctx, settings) {
     settings.oauthClientSecret != null &&
     settings.oauthTokenUrl
   ) {
-    revokeRefreshToken(settings, refreshToken);
+    oauthApi.revokeRefreshToken(settings, refreshToken);
   }
   clearUserTokens(ctx);
   return true;
@@ -495,18 +383,13 @@ function ensureAccessToken(ctx, settings) {
   return {ok: true, accessToken: refreshed.accessToken};
 }
 
-exports.currentUserId = currentUserId;
 exports.requireInteractiveUser = requireInteractiveUser;
 exports.verifyIdentity = verifyIdentity;
 exports.readUserTokens = readUserTokens;
 exports.writeUserTokens = writeUserTokens;
-exports.clearUserTokens = clearUserTokens;
 exports.storeLogin = storeLogin;
 exports.readLogin = readLogin;
 exports.clearLogin = clearLogin;
 exports.consumeOAuthRateLimit = consumeOAuthRateLimit;
 exports.ensureAccessToken = ensureAccessToken;
-exports.refreshStoredTokens = refreshStoredTokens;
 exports.disconnectUser = disconnectUser;
-exports.revokeRefreshToken = revokeRefreshToken;
-

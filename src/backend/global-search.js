@@ -4,39 +4,17 @@
  * (everything the connected user can access). No menu search-root setting.
  * `query` starts the search as an async function and returns a job id; the widget polls `result`.
  */
-const phonemosSession = require('./phonemos-session');
+const oauthSession = require('./oauth-session');
 const searchJobs = require('./search-jobs');
 const urlSafety = require('./url-safety');
-const suggestions = require('./suggestions');
+const appSettings = require('./app-settings');
+const phonemosApi = require('./phonemos-api');
 
 const MAX_QUERY_CHARS = 500;
 
-function trimTrailingSlash(url) {
-  return String(url || '').replace(/\/+$/, '');
-}
-
-function trimSetting(value) {
-  return value == null ? '' : String(value).trim();
-}
-
-function menuSettings(ctx) {
-  const s = ctx.settings || {};
-  const keycloak = urlSafety.keycloakEndpoints(s.keycloakBaseUrl);
-  return {
-    phonemosBaseUrl: trimTrailingSlash(s.phonemosBaseUrl),
-    oauthClientId: trimSetting(s.oauthClientId),
-    oauthClientSecret: s.oauthClientSecret,
-    keycloakBaseUrl: urlSafety.normalizeKeycloakBaseUrl(s.keycloakBaseUrl),
-    oauthTokenUrl: keycloak.tokenUrl,
-    oauthRevokeUrl: keycloak.revokeUrl,
-    withinObjectId: null,
-    searchLimit: 10,
-  };
-}
-
 /** Runs in the runSearch async function; returns the widget response. */
 function searchSite(ctx, settings, query) {
-  const session = phonemosSession.ensureAccessToken(ctx, settings);
+  const session = oauthSession.ensureAccessToken(ctx, settings);
   if (!session.ok) {
     return {
       success: false,
@@ -45,10 +23,10 @@ function searchSite(ctx, settings, query) {
     };
   }
 
-  const site = suggestions.resolveSiteObjectId(settings, session.accessToken);
+  const site = phonemosApi.resolveSiteObjectId(settings, session.accessToken);
   if (!site.ok) {
     if (site.status === 401) {
-      phonemosSession.disconnectUser(ctx, settings);
+      oauthSession.disconnectUser(ctx, settings);
       return {
         success: false,
         needsAuth: true,
@@ -59,18 +37,21 @@ function searchSite(ctx, settings, query) {
   }
   settings.withinObjectId = site.objectId;
 
-  const result = suggestions.searchText(settings, session.accessToken, query);
+  const result = phonemosApi.searchText(settings, session.accessToken, query);
   if (!result.success) {
     const err = result.lastError || {};
-    let message = 'Phonemos search failed with status ' + err.code + '.';
     if (err.code === 401) {
-      phonemosSession.disconnectUser(ctx, settings);
-      message = 'Phonemos rejected the session. Connect again.';
+      oauthSession.disconnectUser(ctx, settings);
+      return {
+        success: false,
+        needsAuth: true,
+        message: 'Phonemos rejected the session. Connect again.',
+      };
     }
     return {
       success: false,
-      needsAuth: err.code === 401,
-      message: message,
+      needsAuth: false,
+      message: 'Phonemos search failed with status ' + err.code + '.',
     };
   }
 
@@ -79,7 +60,6 @@ function searchSite(ctx, settings, query) {
     query: result.query,
     mode: result.mode,
     items: result.items || [],
-    within: site.objectId,
   };
 }
 
@@ -90,12 +70,12 @@ exports.httpHandler = {
       method: 'POST',
       path: 'query',
       handle: function handle(ctx) {
-        const authError = phonemosSession.requireInteractiveUser(ctx);
+        const authError = oauthSession.requireInteractiveUser(ctx);
         if (authError) {
           return ctx.response.json({success: false, needsAuth: true, message: authError});
         }
 
-        const settings = menuSettings(ctx);
+        const settings = appSettings.menuSettings(ctx);
         if (!settings.phonemosBaseUrl) {
           return ctx.response.json({
             success: false,
@@ -122,7 +102,7 @@ exports.httpHandler = {
           });
         }
 
-        if (!phonemosSession.readUserTokens(ctx)) {
+        if (!oauthSession.readUserTokens(ctx)) {
           return ctx.response.json({success: false, needsAuth: true, message: 'Connect to Phonemos first.'});
         }
 
@@ -142,7 +122,7 @@ exports.httpHandler = {
       method: 'GET',
       path: 'result',
       handle: function handle(ctx) {
-        const authError = phonemosSession.requireInteractiveUser(ctx);
+        const authError = oauthSession.requireInteractiveUser(ctx);
         if (authError) {
           return ctx.response.json({success: false, needsAuth: true, message: authError});
         }
@@ -155,7 +135,7 @@ exports.httpHandler = {
       const jobId = ctx.load('jobId');
       let payload;
       try {
-        payload = searchSite(ctx, menuSettings(ctx), ctx.load('query'));
+        payload = searchSite(ctx, appSettings.menuSettings(ctx), ctx.load('query'));
       } catch (e) {
         payload = {success: false, message: 'Phonemos search failed unexpectedly.'};
       }

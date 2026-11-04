@@ -71,7 +71,7 @@ function sleep(ms: number): Promise<void> {
 export async function clearPhonemosSession(host: HostAPI): Promise<void> {
   memorySession = null;
   try {
-    await fetchAppOrThrow(host, 'backend/oauth/logout', {method: 'POST', body: {}});
+    await fetchAppOrThrow(host, 'authorization/oauth/logout', {method: 'POST', body: {}});
   } catch {
     // ignore
   }
@@ -82,7 +82,7 @@ export async function ensurePhonemosTokens(host: HostAPI): Promise<PhonemosSessi
     return memorySession;
   }
 
-  const session = await fetchAppOrThrow<SessionResponse>(host, 'backend/oauth/ensure-session', {
+  const session = await fetchAppOrThrow<SessionResponse>(host, 'authorization/oauth/ensure-session', {
     method: 'POST',
     body: {},
   });
@@ -233,7 +233,7 @@ export async function connectPhonemos(host: HostAPI): Promise<PhonemosSession> {
 
     const authorize = await fetchAppOrThrow<{success: boolean; message?: string; url?: string}>(
       host,
-      'backend/oauth/authorize-url',
+      'authorization/oauth/authorize-url',
       {
         method: 'POST',
         body: {
@@ -267,7 +267,7 @@ export async function connectPhonemos(host: HostAPI): Promise<PhonemosSession> {
     }
 
     const code = await waitForOAuthResult(state, popup);
-    const tokenResponse = await fetchAppOrThrow<TokenResponse>(host, 'backend/oauth/new-session', {
+    const tokenResponse = await fetchAppOrThrow<TokenResponse>(host, 'authorization/oauth/new-session', {
       method: 'POST',
       body: {state, code},
     });

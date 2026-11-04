@@ -1,20 +1,6 @@
 {
   "entityTypeExtensions": [
     {
-      "entityType": "AppGlobalStorage",
-      "properties": {
-        "oauthPending": {
-          "type": "string"
-        },
-        "oauthSessions": {
-          "type": "string"
-        },
-        "oauthLogins": {
-          "type": "string"
-        }
-      }
-    },
-    {
       "entityType": "User",
       "properties": {
         "phonemosOAuthSession": {

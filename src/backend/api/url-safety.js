@@ -118,6 +118,10 @@ function isAllowedOAuthRedirectUri(raw, expectedHost) {
   return redirectPathAllowed(raw);
 }
 
+function trimTrailingSlash(url) {
+  return String(url || '').replace(/\/+$/, '');
+}
+
 function validateOutboundUrl(raw, label) {
   const parsed = parseAbsoluteUrl(raw);
   if (!parsed) {
@@ -189,7 +193,7 @@ function keycloakEndpoints(baseUrl) {
   };
 }
 
-exports.validateOutboundUrl = validateOutboundUrl;
+exports.trimTrailingSlash = trimTrailingSlash;
 exports.validateOutboundSettings = validateOutboundSettings;
 exports.isAllowedOAuthRedirectUri = isAllowedOAuthRedirectUri;
 exports.normalizeKeycloakBaseUrl = normalizeKeycloakBaseUrl;
