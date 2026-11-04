@@ -88,8 +88,7 @@
   box-shadow: 0 6px 18px rgba(var(--phonemos-shadow), 0.05);
 }
 
-.banner-error,
-.banner-hint {
+.banner-error {
   margin: 0 0 calc(var(--ring-unit) * 2) !important;
 }
 
@@ -192,11 +191,6 @@
   margin: 0;
 }
 
-.error .ring-dialog-closeButtonOutside {
-    top: var(--ring-unit);
-    right: calc(var(--ring-unit));
-}
-
 .error-details-header {
   padding: var(--ring-unit) var(--ring-unit);
   font-weight: var(--ring-font-weight-bold);
@@ -255,11 +249,6 @@
   -webkit-line-clamp: 3;
   -webkit-box-orient: vertical;
   overflow: hidden;
-}
-
-.empty-state {
-  margin: 0;
-  color: rgba(var(--phonemos-ink), 0.58);
 }
 
 @media (max-width: 560px) {

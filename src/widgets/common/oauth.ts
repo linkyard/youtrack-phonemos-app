@@ -1,9 +1,7 @@
-import {waitForOAuthResult} from '../shared/oauth-result';
-import {deriveOAuthCallbackUrl, getRedirectDebugInfo, resolveOAuthRedirectUri} from '../shared/redirect-uri';
+import {waitForOAuthResult} from './oauth-result';
+import {getRedirectDebugInfo, resolveOAuthRedirectUri} from './redirect-uri';
 
 type HostAPI = Awaited<ReturnType<typeof YTApp.register>>;
-
-export {deriveOAuthCallbackUrl, getRedirectDebugInfo, resolveOAuthRedirectUri};
 
 /** Browser-visible session flag — access/refresh tokens never leave the YouTrack backend. */
 export type PhonemosSession = {
@@ -85,8 +83,8 @@ export async function ensurePhonemosTokens(host: HostAPI): Promise<PhonemosSessi
   }
 
   const session = await fetchAppOrThrow<SessionResponse>(host, 'backend/oauth/ensure-session', {
-      method: 'POST',
-      body: {}
+    method: 'POST',
+    body: {},
   });
   if (!session.success || !session.connected) {
     return null;
@@ -166,7 +164,6 @@ export function formatUnknownError(error: unknown): string {
   }
 }
 
-/** Just the plain message, no name=/stack/JSON dump — for short, user-facing summaries. */
 function shortErrorMessage(error: unknown): string {
   if (error == null) {
     return String(error);
@@ -183,8 +180,7 @@ function shortErrorMessage(error: unknown): string {
 
 /**
  * Thrown by connectPhonemos on failure. `message` is a short, concatenated summary
- * fit for inline display; `details` is the full diagnostic dump (stacks, per-path
- * errors, session snapshot, redirect debug info) for a "show details" view.
+ * fit for inline display; `details` is the full diagnostic dump for a "show details" view.
  */
 export class PhonemosConnectionError extends Error {
   details: string;
@@ -219,7 +215,6 @@ function shortUrl(url: string): string {
 
 export async function connectPhonemos(host: HostAPI): Promise<PhonemosSession> {
   const debug: string[] = [];
-  const pushDebug = (line: string) => debug.push(line);
 
   try {
     memorySession = null;
@@ -228,17 +223,13 @@ export async function connectPhonemos(host: HostAPI): Promise<PhonemosSession> {
     try {
       redirectUri = resolveOAuthRedirectUri();
     } catch (e) {
-      throw new Error(
-        formatUnknownError(e) + '\n' + getRedirectDebugInfo(),
-      );
+      throw new Error(formatUnknownError(e) + '\n' + getRedirectDebugInfo());
     }
-    pushDebug(`redirectUri=${redirectUri}`);
-    pushDebug(`derivedCallback=${deriveOAuthCallbackUrl() || '(none)'}`);
+    debug.push(`redirectUri=${redirectUri}`);
 
     const state = randomUrlSafe(16);
     const codeVerifier = randomUrlSafe(32);
     const codeChallenge = await pkceChallenge(codeVerifier);
-    pushDebug(`statePrefix=${state.slice(0, 8)}…`);
 
     const authorize = await fetchAppOrThrow<{success: boolean; message?: string; url?: string}>(
       host,
@@ -255,15 +246,9 @@ export async function connectPhonemos(host: HostAPI): Promise<PhonemosSession> {
     );
 
     if (!authorize.success || !authorize.url) {
-      throw new Error(
-        [
-          authorize.message || 'Unable to start Phonemos connection.',
-          ...debug,
-          `authorizeSuccess=${String(authorize.success)}`,
-        ].join('\n'),
-      );
+      throw new Error(authorize.message || 'Unable to start Phonemos connection.');
     }
-    pushDebug(`authorizeUrl=${shortUrl(authorize.url)}`);
+    debug.push(`authorizeUrl=${shortUrl(authorize.url)}`);
 
     // Unique name each attempt. Reusing a fixed name after the callback navigates
     // the previous popup to about:blank can leave Chromium with an empty window
@@ -273,76 +258,31 @@ export async function connectPhonemos(host: HostAPI): Promise<PhonemosSession> {
     const popupName = `phonemos-oauth-${state.slice(0, 12)}-${youTrackTheme()}`;
     const popup = window.open(authorize.url, popupName, 'width=480,height=720');
     if (!popup) {
-      throw new Error(['Pop-up blocked. Allow pop-ups for YouTrack to connect Phonemos.', ...debug].join('\n'));
+      throw new Error('Pop-up blocked. Allow pop-ups for YouTrack to connect Phonemos.');
     }
 
     await sleep(300);
-    pushDebug(`popupClosedAfter300ms=${String(popup.closed)}`);
     if (popup.closed) {
-      throw new Error(
-        ['Pop-up blocked or closed immediately. Allow pop-ups for YouTrack and try again.', ...debug].join('\n'),
-      );
+      throw new Error('Pop-up blocked or closed immediately. Allow pop-ups for YouTrack and try again.');
     }
 
-    const pathErrors: {path: string; error: unknown}[] = [];
+    const code = await waitForOAuthResult(state, popup);
+    const tokenResponse = await fetchAppOrThrow<TokenResponse>(host, 'backend/oauth/new-session', {
+      method: 'POST',
+      body: {state, code},
+    });
 
-    const viaCode = async () => {
-      const code = await waitForOAuthResult(state, popup);
-      pushDebug(`codePath: got code len=${String(code).length}`);
-      
-      const tokenResponse = await fetchAppOrThrow<TokenResponse>(host, 'backend/oauth/new-session', {
-        method: 'POST',
-        body: {
-          state,
-          code,
-        },
-      });
-
-      const session = sessionFromResponse(tokenResponse);
-      if (!session) {
-        throw new Error(tokenResponse.message || 'code-path: token exchange failed.');
-      }
-      memorySession = session;
-      try {
-        popup.close();
-      } catch {
-        // ignore
-      }
-      return session;
-    };
-
+    const session = sessionFromResponse(tokenResponse);
+    if (!session) {
+      throw new Error(tokenResponse.message || 'Token exchange failed.');
+    }
+    memorySession = session;
     try {
-      return await viaCode().catch((error) => {
-        pathErrors.push({path: 'code', error});
-        throw Error('OAuth failed.');
-      });
-    } catch (e) {
-
-      console.log("An error ocurred:", e);
-      let sessionSnapshot = 'sessionSnapshot=(unreadable)';
-      try {
-        const session = await fetchAppOrThrow<SessionResponse>(host, 'backend/oauth/ensure-session', {method: 'POST', body: {}});
-        sessionSnapshot = `sessionSuccess=${String(session.success)} connected=${String(!!session.connected)}`;
-      } catch (sessionError) {
-        sessionSnapshot = `sessionSnapshotError=${formatUnknownError(sessionError)}`;
-      }
-
-      const summary = Array.from(
-        new Set([shortErrorMessage(e), ...pathErrors.map((entry) => shortErrorMessage(entry.error))].filter(Boolean)),
-      ).join('. ');
-
-      const details = [
-        'Phonemos connection failed.',
-        formatUnknownError(e),
-        ...pathErrors.map((entry) => `${entry.path}-path error:\n${formatUnknownError(entry.error)}`),
-        sessionSnapshot,
-        `popupClosedAtEnd=${String(popup.closed)}`,
-        ...debug,
-        getRedirectDebugInfo(),
-      ].join('\n\n');
-
-      throw new PhonemosConnectionError(summary || 'Phonemos connection failed.', details);
+      popup.close();
+    } catch {
+      // ignore
     }
+    return session;
   } catch (e) {
     if (e instanceof PhonemosConnectionError) {
       throw e;

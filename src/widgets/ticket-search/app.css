@@ -7,10 +7,6 @@
   color: var(--ring-text-color);
 }
 
-.header {
-  padding-top: var(--ring-font-size);
-}
-
 .header-actions {
   display: flex;
   align-items: center;

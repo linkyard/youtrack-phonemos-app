@@ -20,19 +20,14 @@
       }
     </style>
     <script>
-      // The opening widget appends its YouTrack theme to the popup name; fall back to the OS setting.
       var themeMatch = /^phonemos-oauth-.*-(dark|light)$/.exec(window.name);
-      var isDark = themeMatch
-        ? themeMatch[1] === 'dark'
-        : window.matchMedia('(prefers-color-scheme: dark)').matches;
-      if (isDark) {
-        document.documentElement.classList.add('theme-dark');
-      }
+      var isDark = themeMatch ? themeMatch[1] === 'dark' : window.matchMedia('(prefers-color-scheme: dark)').matches;
+      if (isDark) document.documentElement.classList.add('theme-dark');
     </script>
   </head>
   <body>
     <h1>Phonemos</h1>
-    <span id="msg"><p>Connecting…</p></span>
+    <div id="msg"><p>Connecting…</p></div>
     <script>
       var MESSAGE_TYPE = 'phonemos:oauth';
 
@@ -42,15 +37,23 @@
       var error = params.get('error_description') || params.get('error');
       var msg = document.getElementById('msg');
 
+      // Present feedback without any prompt injection
+      function showMessage(msgList) {
+        msg.replaceChildren();
+        for (var i = 0; i < msgList.length; i++) {
+          var p = document.createElement('p');
+          p.textContent = msgList[i];
+          msg.appendChild(p);
+        }
+      }
+
       if (!(code || error)) {
-        msg.innerHTML = '<p>Error:No authorization response found.<br />You can close this window.</p>';
+        show('Error: No authorization response found.', 'You can close this window.');
 
       } else if (error) {
-        msg.innerHTML = '<p>Received an error from connection attempt.<br /><br />' +
-          error +
-          '<br /><br />You can close this window.</p>';
-      
-      } else { 
+        show('Received an error from the connection attempt.', error, 'You can close this window.');
+
+      } else {
 
         var payload = {type: MESSAGE_TYPE, code: code, state: state, error: error, ts: Date.now()};
         var opener = window.opener || (window.top && window.top.opener) || null;
@@ -63,14 +66,14 @@
             setTimeout(() => opener.postMessage(payload, '*'), 400);
             setTimeout(() => opener.postMessage(payload, '*'), 600);
 
-            msg.innerHTML = '<p>Successfully connected.<br />This window will close automatically...</p>'
+            show('Successfully connected.', 'This window will close automatically…');
             setTimeout(() => window.close(), 800);
 
           } else {
-            msg.innerHTML = '<p>Error: Unable to connect to the main window.<br />You can close this window.</p>'
+            show('Error: Unable to connect to the main window.', 'You can close this window.');
           }
         } catch (e) {
-          msg.innerHTML = '<p>Error: Unable to connect to the main window.<br />You can close this window.</p>'
+          show('Error: Unable to connect to the main window.', 'You can close this window.');
         }
       }
     </script>

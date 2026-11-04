@@ -11,8 +11,8 @@ import {
   ensurePhonemosTokens,
   formatUnknownError,
   PhonemosConnectionError,
-} from '../suggested-kb/oauth';
-import {runSearchJob} from '../shared/search-job';
+} from '../common/oauth';
+import {runSearchJob} from '../common/search-job';
 
 import phonemosLogo from './phonemos-logo-full.svg?url';
 import phonemosLogoDark from './phonemos-logo-full-dark.svg?url';
@@ -153,8 +153,8 @@ const AppComponent: React.FunctionComponent = () => {
     setSearched(false);
     setHits([]);
     try {
-      // MAIN_MENU_ITEM defaults fetchApp to user scope — force global for kb-search.
-      const response = await runSearchJob<SearchResponse>(host, 'kb-search/query', 'kb-search/result', {
+      // MAIN_MENU_ITEM defaults fetchApp to user scope — force global for the search handler.
+      const response = await runSearchJob<SearchResponse>(host, 'global-search/query', 'global-search/result', {
         scope: false,
         body: {q},
       });
@@ -175,11 +175,6 @@ const AppComponent: React.FunctionComponent = () => {
     } finally {
       setSearching(false);
     }
-  };
-
-  const onSearch = async (event: React.FormEvent) => {
-    event.preventDefault();
-    await runSearch();
   };
 
   const accountBar = (
@@ -264,19 +259,12 @@ const AppComponent: React.FunctionComponent = () => {
             <pre className="error-details">{errorDetails}</pre>
           </Dialog>
         )}
-        {!connected && (
-          <p className="hint banner-hint">
-            Connecting from a ticket also works. Keycloak must allow the appResources popup callback URL
-            shown under Connect on the ticket widget — not this menu page URL.
-          </p>
-        )}
-
         {connected && (
           <section className="panel">
             <div className="panel-header">
               <h2 className="panel-title">Search</h2>
             </div>
-            <form className="search" onSubmit={(event) => void onSearch(event)}>
+            <div className="search" role="search">
               <Input
                 value={query}
                 placeholder="Search articles, topics, and pages"
@@ -291,16 +279,13 @@ const AppComponent: React.FunctionComponent = () => {
               />
               <Button
                 primary
-                type="submit"
+                type="button"
+                onClick={() => void runSearch()}
                 disabled={searching || busy || !query.trim() || !host}
-                onClick={(event) => {
-                  event.preventDefault();
-                  void runSearch();
-                }}
               >
                 Search
               </Button>
-            </form>
+            </div>
 
             {searching && (
               <div className="search-status">

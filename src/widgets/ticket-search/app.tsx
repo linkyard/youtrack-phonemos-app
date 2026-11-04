@@ -7,38 +7,26 @@ import Dialog from '@jetbrains/ring-ui-built/components/dialog/dialog';
 import {
   clearPhonemosSession,
   connectPhonemos,
-  ensurePhonemosTokens,
   formatUnknownError,
-  getRedirectDebugInfo,
   PhonemosConnectionError,
-  resolveOAuthRedirectUri,
-} from './oauth';
-import {runSearchJob} from '../shared/search-job';
+} from '../common/oauth';
+import {runSearchJob} from '../common/search-job';
 
-function verifyOauthRedirect(): string {
-  try {
-    resolveOAuthRedirectUri();
-    return '';
-  } catch (e) {
-    return e instanceof Error ? e.message : getRedirectDebugInfo();
-  }
-}
-
-type SuggestionItem = {
+type TicketSearchItem = {
   objectId: string;
   name: string;
   extract: string;
   href: string;
 };
 
-type SuggestionsResponse = {
+type TicketSearchResponse = {
   success: boolean;
   message?: string;
   needsAuth?: boolean;
   pending?: boolean;
   jobId?: string;
   mode?: string;
-  items?: SuggestionItem[];
+  items?: TicketSearchItem[];
 };
 
 type Status = 'loading' | 'needs-auth' | 'ready' | 'empty' | 'error';
@@ -48,7 +36,7 @@ const host = await YTApp.register();
 const AppComponent: React.FunctionComponent = () => {
   const [status, setStatus] = useState<Status>('loading');
   const [connected, setConnected] = useState(false);
-  const [items, setItems] = useState<SuggestionItem[]>([]);
+  const [items, setItems] = useState<TicketSearchItem[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [errorDetails, setErrorDetails] = useState<string | null>(null);
   const [showErrorDetails, setShowErrorDetails] = useState(false);
@@ -59,15 +47,7 @@ const AppComponent: React.FunctionComponent = () => {
     setError(null);
     setErrorDetails(null);
     try {
-      // Ensure a server-side session exists; tokens never enter the widget.
-      const session = await ensurePhonemosTokens(host);
-      if (!session) {
-        setConnected(false);
-        setStatus('needs-auth');
-        return;
-      }
-      setConnected(true);
-      const response = await runSearchJob<SuggestionsResponse>(host, 'suggestions/list', 'suggestions/result', {
+      const response = await runSearchJob<TicketSearchResponse>(host, 'ticket-search/list', 'ticket-search/result', {
         scope: true,
         body: {},
       });
@@ -84,6 +64,7 @@ const AppComponent: React.FunctionComponent = () => {
         throw new Error(response.message || 'Unable to load suggestions.');
       }
       const nextItems = response.items || [];
+      setConnected(true);
       setItems(nextItems);
       setMode(response.mode || null);
       setStatus(nextItems.length ? 'ready' : 'empty');
@@ -155,9 +136,6 @@ const AppComponent: React.FunctionComponent = () => {
           <Button primary onClick={() => void onConnect()}>
             Connect to Phonemos
           </Button>
-          <p className="muted" style={{whiteSpace: 'pre-wrap', fontSize: '11px'}}>
-            {verifyOauthRedirect()}
-          </p>
         </div>
       )}
 

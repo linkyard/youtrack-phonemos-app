@@ -6,7 +6,7 @@
 export const OAUTH_POPUP_CALLBACK_FILE = 'oauth-popup-callback.html';
 
 function isYouTrackAppShellUrl(url: string): boolean {
-  return /\/app\/[^/]+\/(?:search|oauth-callback)(?:[/?#]|$)/i.test(url);
+  return /\/app\/[^/]+\/(?:oauth-callback|global-search)(?:[/?#]|$)/i.test(url);
 }
 
 function isUsableRedirectUri(url: string): boolean {
@@ -32,7 +32,7 @@ function resolveAgainstWidgetBase(ref: string): string | null {
 }
 
 /** URLs that may contain /api/appResources/{id}/widgets/ */
-export function listWidgetResourceHints(): string[] {
+function listWidgetResourceHints(): string[] {
   const out: string[] = [];
   const push = (value: string | null | undefined) => {
     if (value && !out.includes(value)) {
@@ -80,7 +80,7 @@ export function listWidgetResourceHints(): string[] {
   return out;
 }
 
-export function callbackUrlFromAppResourcesHint(url: string): string | null {
+function callbackUrlFromAppResourcesHint(url: string): string | null {
   try {
     const absolute = new URL(url, document.baseURI || window.location.href);
     const match = absolute.pathname.match(/^(.*\/api\/appResources\/[^/]+\/widgets)\//i);
@@ -105,7 +105,7 @@ export function getRedirectDebugInfo(): string {
 /**
  * Build OAuth redirect URI for the static popup callback under appResources.
  */
-export function deriveOAuthCallbackUrl(): string | null {
+function deriveOAuthCallbackUrl(): string | null {
   for (const hint of listWidgetResourceHints()) {
     const fromHint = callbackUrlFromAppResourcesHint(hint);
     if (fromHint) {
@@ -119,7 +119,7 @@ export function deriveOAuthCallbackUrl(): string | null {
       const current = new URL(window.location.href);
       current.search = '';
       current.hash = '';
-      if (/\/widgets\/(?:suggested-kb|search|oauth-callback)\//i.test(current.href)) {
+      if (/\/widgets\/(?:ticket-search|global-search|oauth-callback)\//i.test(current.href)) {
         const path = current.pathname.replace(/\/widgets\/[^/]+\/.*$/i, `/widgets/${OAUTH_POPUP_CALLBACK_FILE}`);
         if (path.includes('/widgets/')) {
           current.pathname = path;

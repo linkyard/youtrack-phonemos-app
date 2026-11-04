@@ -1,5 +1,4 @@
 export const OAUTH_RESULT_TYPE = 'phonemos:oauth';
-export const OAUTH_STORAGE_KEY = 'phonemos:oauth-result';
 
 export type OAuthResultPayload = {
   type: typeof OAUTH_RESULT_TYPE;
@@ -21,7 +20,9 @@ export function youTrackHostOrigin(): string | null {
     }
     try {
       return new URL(candidate).origin;
-    } catch { }
+    } catch {
+      // ignore
+    }
   }
   return null;
 }
