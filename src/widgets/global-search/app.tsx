@@ -1,5 +1,6 @@
 import React, {memo, useCallback, useEffect, useState} from 'react';
 import Button from '@jetbrains/ring-ui-built/components/button/button';
+import Dialog from '@jetbrains/ring-ui-built/components/dialog/dialog';
 import Input from '@jetbrains/ring-ui-built/components/input/input';
 import Link from '@jetbrains/ring-ui-built/components/link/link';
 import LoaderInline from '@jetbrains/ring-ui-built/components/loader-inline/loader-inline';
@@ -9,9 +10,12 @@ import {
   connectPhonemos,
   ensurePhonemosTokens,
   formatUnknownError,
-} from '../suggested-kb/oauth';
+  PhonemosConnectionError,
+} from '../common/oauth';
+import {runSearchJob} from '../common/search-job';
 
 import phonemosLogo from './phonemos-logo-full.svg?url';
+import phonemosLogoDark from './phonemos-logo-full-dark.svg?url';
 
 type Mode = 'checking' | 'home' | 'error';
 
@@ -26,8 +30,17 @@ type SearchResponse = {
   success: boolean;
   message?: string;
   needsAuth?: boolean;
+  pending?: boolean;
+  jobId?: string;
   items?: SearchHit[];
 };
+
+const PhonemosLogo = () => (
+  <>
+    <img className="logo logo-light" src={phonemosLogo} alt="Phonemos" width={333} height={72} />
+    <img className="logo logo-dark" src={phonemosLogoDark} alt="Phonemos" width={333} height={72} />
+  </>
+);
 
 const AppComponent: React.FunctionComponent = () => {
   const [mode, setMode] = useState<Mode>('checking');
@@ -40,6 +53,8 @@ const AppComponent: React.FunctionComponent = () => {
   const [searched, setSearched] = useState(false);
   const [hits, setHits] = useState<SearchHit[]>([]);
   const [searchError, setSearchError] = useState<string | null>(null);
+  const [errorDetails, setErrorDetails] = useState<string | null>(null);
+  const [showErrorDetails, setShowErrorDetails] = useState(false);
 
   const refreshConnection = useCallback(async (api: Awaited<ReturnType<typeof YTApp.register>>) => {
     const session = await ensurePhonemosTokens(api);
@@ -85,13 +100,19 @@ const AppComponent: React.FunctionComponent = () => {
     }
     setBusy(true);
     setMessage('');
+    setErrorDetails(null);
     try {
       await connectPhonemos(host);
       await refreshConnection(host);
       setMode('home');
     } catch (e) {
       setMode('error');
-      setMessage(formatUnknownError(e));
+      if (e instanceof PhonemosConnectionError) {
+        setMessage(e.message);
+        setErrorDetails(e.details);
+      } else {
+        setMessage(formatUnknownError(e));
+      }
     } finally {
       setBusy(false);
     }
@@ -108,6 +129,7 @@ const AppComponent: React.FunctionComponent = () => {
       setHits([]);
       setSearched(false);
       setSearchError(null);
+      setErrorDetails(null);
       setMode('home');
       setMessage('');
     } catch (e) {
@@ -131,9 +153,8 @@ const AppComponent: React.FunctionComponent = () => {
     setSearched(false);
     setHits([]);
     try {
-      // MAIN_MENU_ITEM defaults fetchApp to user scope — force global for kb-search.
-      const response = await host.fetchApp<SearchResponse>('kb-search/query', {
-        method: 'POST',
+      // MAIN_MENU_ITEM defaults fetchApp to user scope — force global for the search handler.
+      const response = await runSearchJob<SearchResponse>(host, 'global-search/query', 'global-search/result', {
         scope: false,
         body: {q},
       });
@@ -154,11 +175,6 @@ const AppComponent: React.FunctionComponent = () => {
     } finally {
       setSearching(false);
     }
-  };
-
-  const onSearch = async (event: React.FormEvent) => {
-    event.preventDefault();
-    await runSearch();
   };
 
   const accountBar = (
@@ -183,7 +199,7 @@ const AppComponent: React.FunctionComponent = () => {
   const brandHero = (
     <header className="hero">
       <div className="hero-main">
-        <img className="logo" src={phonemosLogo} alt="Phonemos" width={333} height={72} />
+        <PhonemosLogo/>
         <p className="lead">
           Search your knowledge base from YouTrack. On tickets, Phonemos also suggests articles from
           the issue text.
@@ -199,7 +215,7 @@ const AppComponent: React.FunctionComponent = () => {
         <div className="shell">
           <header className="hero">
             <div className="hero-main">
-              <img className="logo" src={phonemosLogo} alt="Phonemos" width={333} height={72} />
+              <PhonemosLogo/>
             </div>
           </header>
           <div className="panel">
@@ -218,20 +234,37 @@ const AppComponent: React.FunctionComponent = () => {
       <div className="shell">
         {brandHero}
 
-        {mode === 'error' && message ? <p className="error banner-error">{message}</p> : null}
-        {!connected && (
-          <p className="hint banner-hint">
-            Sign-in from a ticket also works. Keycloak must allow the appResources popup callback URL
-            shown under Connect on the ticket widget — not this menu page URL.
-          </p>
-        )}
+        {mode === 'error' && message ? (
+          <div className="error-row banner-error">
+            <p className="error">{message}</p>
+            {errorDetails && (
+              <Button text onClick={() => setShowErrorDetails(true)}>
+                Details
+              </Button>
+            )}
+          </div>
+        ) : null}
 
+        {errorDetails && (
+          <Dialog
+            show={showErrorDetails}
+            label="Connection error details"
+            showCloseButton
+            onCloseClick={() => setShowErrorDetails(false)}
+            onCloseAttempt={() => setShowErrorDetails(false)}
+            onOverlayClick={() => setShowErrorDetails(false)}
+            onEscPress={() => setShowErrorDetails(false)}
+          >
+            <div className="error-details-header">Connection error details</div>
+            <pre className="error-details">{errorDetails}</pre>
+          </Dialog>
+        )}
         {connected && (
           <section className="panel">
             <div className="panel-header">
               <h2 className="panel-title">Search</h2>
             </div>
-            <form className="search" onSubmit={(event) => void onSearch(event)}>
+            <div className="search" role="search">
               <Input
                 value={query}
                 placeholder="Search articles, topics, and pages"
@@ -246,16 +279,13 @@ const AppComponent: React.FunctionComponent = () => {
               />
               <Button
                 primary
-                type="submit"
+                type="button"
+                onClick={() => void runSearch()}
                 disabled={searching || busy || !query.trim() || !host}
-                onClick={(event) => {
-                  event.preventDefault();
-                  void runSearch();
-                }}
               >
                 Search
               </Button>
-            </form>
+            </div>
 
             {searching && (
               <div className="search-status">

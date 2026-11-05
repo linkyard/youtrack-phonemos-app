@@ -53,7 +53,7 @@ export default tseslint.config(
     }
   },
   {
-    files: ["src/*.js"],
+    files: ["src/backend/*.js", "src/backend/**/*.js"],
 
     languageOptions: {
       globals: {

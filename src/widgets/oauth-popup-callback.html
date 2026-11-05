@@ -2,135 +2,80 @@
 <html lang="en">
   <head>
     <meta charset="utf-8" />
-    <title>Phonemos sign-in</title>
+    <title>Phonemos connect</title>
     <style>
+      :root {
+        color-scheme: light;
+        color: rgb(39, 40, 46);
+        background: rgb(255, 255, 255);
+      }
+      :root.theme-dark {
+        color-scheme: dark;
+        color: rgb(255, 255, 255);
+        background: rgb(30, 31, 34);
+      }
       body {
         font-family: system-ui, sans-serif;
         padding: 24px;
-        color: #1b1b1b;
-        background: #fff;
-      }
-      @media (prefers-color-scheme: dark) {
-        body {
-          color: #f2f2f2;
-          background: #1b1b1b;
-        }
       }
     </style>
+    <script>
+      var themeMatch = /^phonemos-oauth-.*-(dark|light)$/.exec(window.name);
+      var isDark = themeMatch ? themeMatch[1] === 'dark' : window.matchMedia('(prefers-color-scheme: dark)').matches;
+      if (isDark) document.documentElement.classList.add('theme-dark');
+    </script>
   </head>
   <body>
     <h1>Phonemos</h1>
-    <p id="msg">Completing sign-in…</p>
+    <div id="msg"><p>Connecting…</p></div>
     <script>
-      (function () {
-        var MESSAGE_TYPE = 'phonemos:oauth';
-        var APP_NAME = 'phonemos';
-        var params = new URLSearchParams(window.location.search);
-        if (!params.get('code') && !params.get('error') && window.location.hash) {
-          var hash = window.location.hash.charAt(0) === '#' ? window.location.hash.slice(1) : window.location.hash;
-          if (hash.indexOf('=') >= 0) {
-            params = new URLSearchParams(hash);
+      var MESSAGE_TYPE = 'phonemos:oauth';
+
+      var params = new URLSearchParams(window.location.search);
+      var code = params.get('code');
+      var state = params.get('state');
+      var error = params.get('error_description') || params.get('error');
+      var msg = document.getElementById('msg');
+
+      // Present feedback without any prompt injection
+      function showMessage(msgList) {
+        msg.replaceChildren();
+        for (var i = 0; i < msgList.length; i++) {
+          var p = document.createElement('p');
+          p.textContent = msgList[i];
+          msg.appendChild(p);
+        }
+      }
+
+      if (!(code || error)) {
+        show('Error: No authorization response found.', 'You can close this window.');
+
+      } else if (error) {
+        show('Received an error from the connection attempt.', error, 'You can close this window.');
+
+      } else {
+
+        var payload = {type: MESSAGE_TYPE, code: code, state: state, error: error, ts: Date.now()};
+        var opener = window.opener || (window.top && window.top.opener) || null;
+
+        try {
+          if (opener) {
+
+            opener.postMessage(payload, '*');
+            setTimeout(() => opener.postMessage(payload, '*'), 200);
+            setTimeout(() => opener.postMessage(payload, '*'), 400);
+            setTimeout(() => opener.postMessage(payload, '*'), 600);
+
+            show('Successfully connected.', 'This window will close automatically…');
+            setTimeout(() => window.close(), 800);
+
+          } else {
+            show('Error: Unable to connect to the main window.', 'You can close this window.');
           }
+        } catch (e) {
+          show('Error: Unable to connect to the main window.', 'You can close this window.');
         }
-        var code = params.get('code');
-        var state = params.get('state');
-        var error = params.get('error_description') || params.get('error');
-        var msg = document.getElementById('msg');
-        if (!(code || error)) {
-          msg.textContent = 'No authorization response found. You can close this window.';
-          return;
-        }
-
-        var payload = {
-          type: MESSAGE_TYPE,
-          code: code,
-          state: state,
-          error: error,
-          ts: Date.now(),
-        };
-
-        function notifyOpener() {
-          try {
-            window.name = 'phonemos-oauth:' + JSON.stringify(payload);
-          } catch (e) {}
-          // YouTrack widgets run in about:srcdoc (opaque origin). A concrete
-          // targetOrigin never matches, so the opener must be addressed with '*'.
-          // The opener still requires event.source === this popup and matching state.
-          try {
-            var opener = window.opener || (window.top && window.top.opener) || null;
-            if (opener) {
-              opener.postMessage(payload, '*');
-            }
-          } catch (e) {}
-        }
-
-        function closeSoon() {
-          setTimeout(function () {
-            try {
-              window.close();
-            } catch (e) {}
-          }, 800);
-        }
-
-        // Tell the widget immediately — do not navigate to about:blank (empty hang,
-        // and srcdoc still cannot read window.name across origins).
-        notifyOpener();
-        setTimeout(notifyOpener, 200);
-        setTimeout(notifyOpener, 500);
-
-        var completeUrl =
-          window.location.origin +
-          '/api/extensionEndpoints/' +
-          encodeURIComponent(APP_NAME) +
-          '/backend/oauth/complete';
-
-        msg.textContent = 'Finishing sign-in…';
-        fetch(completeUrl, {
-          method: 'POST',
-          credentials: 'same-origin',
-          headers: {
-            Accept: 'application/json',
-            'Content-Type': 'application/json',
-            'X-Requested-With': 'XMLHttpRequest',
-          },
-          body: JSON.stringify({
-            code: code,
-            state: state,
-            error: error,
-          }),
-        })
-          .then(function (response) {
-            return response
-              .json()
-              .catch(function () {
-                return {success: false, message: 'HTTP ' + response.status};
-              })
-              .then(function (data) {
-                return {ok: response.ok, data: data || {}};
-              });
-          })
-          .then(function (result) {
-            notifyOpener();
-            if (error) {
-              msg.textContent = 'Sign-in failed: ' + error;
-            } else if (result.data && result.data.connected) {
-              msg.textContent = 'Signed in. You can close this window.';
-            } else {
-              msg.textContent =
-                'Returning to YouTrack… ' +
-                ((result.data && result.data.message) || '');
-            }
-            closeSoon();
-          })
-          .catch(function (e) {
-            notifyOpener();
-            msg.textContent =
-              'Returning to YouTrack… (' +
-              (e && e.message ? e.message : 'network error') +
-              ')';
-            closeSoon();
-          });
-      })();
+      }
     </script>
   </body>
 </html>

@@ -20,7 +20,7 @@ The Software is licensed under the MIT License. You may use, copy, modify, merge
 
 ## 3 Trademarks
 
-Phonemos and the Phonemos logo are owned by Phonemos LLC. “Phonemos” is a registered trademark of Phonemos LLC. This EULA and the MIT License grant rights in this Youtrack App's Software only. They do not grant any right to use the Phonemos name or the Phonemos logo.
+Phonemos and the Phonemos logo are owned by Phonemos LLC. “Phonemos” is a registered trademark of Phonemos LLC. This EULA and the MIT License grant rights in this YouTrack App's Software only. They do not grant any right to use the Phonemos name or the Phonemos logo.
 
 ## 4 Warranty disclaimer and liability
 

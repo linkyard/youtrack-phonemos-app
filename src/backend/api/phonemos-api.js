@@ -1,43 +1,11 @@
 /**
- * Issue-scoped suggestions endpoint.
- * Global OAuth endpoints live in backend.js (YouTrack forbids mixing scopes in one handler).
+ * Phonemos REST helpers: object ids, site lookup, and objects-search.
  */
 const http = require('@jetbrains/youtrack-scripting-api/http');
-const phonemosSession = require('./phonemos-session');
 const urlSafety = require('./url-safety');
 
-const MAX_QUERY_CHARS = 3500;
 const DEFAULT_SEARCH_LIMIT = 5;
-
-function trimTrailingSlash(url) {
-  return String(url || '').replace(/\/+$/, '');
-}
-
-function trimSetting(value) {
-  return value == null ? value : String(value).trim();
-}
-
-function requireSettings(ctx) {
-  const s = ctx.settings || {};
-  return {
-    phonemosBaseUrl: trimTrailingSlash(s.phonemosBaseUrl),
-    oauthClientId: trimSetting(s.oauthClientId),
-    // Do not trim/stringify — YouTrack secret settings must be passed through to http.basicAuth.
-    oauthClientSecret: s.oauthClientSecret,
-    oauthAuthorizationUrl: trimSetting(s.oauthAuthorizationUrl),
-    oauthTokenUrl: trimSetting(s.oauthTokenUrl),
-    oauthRedirectUri: trimSetting(s.oauthRedirectUri),
-    withinObjectId: normalizeWithinObjectId(s.withinObjectId),
-    withinObjectIdRaw: s.withinObjectId == null ? '' : String(s.withinObjectId).trim(),
-    searchLimit: s.searchLimit,
-  };
-}
-
-function missingSettings(settings, keys) {
-  return keys.filter(function (key) {
-    return settings[key] == null || String(settings[key]).trim() === '';
-  });
-}
+const MAX_QUERY_CHARS = 3500;
 
 function parseJsonSafe(response) {
   try {
@@ -176,7 +144,6 @@ function normalizeWithinObjectId(value) {
     return asSlug;
   }
 
-  // URL or path: /t/{slug}/… or /o/{slug|uuid}/…
   const match = raw.match(/\/(?:t|o)\/([A-Za-z0-9_-]{22}|[0-9a-fA-F-]{36})(?:\/|$)/);
   if (match) {
     return normalizeUuid(match[1]) || slugToUuid(match[1]);
@@ -188,81 +155,11 @@ function normalizeWithinObjectId(value) {
 function objectHref(baseUrl, objectId) {
   const slug = uuidToSlug(objectId);
   if (!slug) {
-    return trimTrailingSlash(baseUrl) + '/o/' + objectId;
+    return urlSafety.trimTrailingSlash(baseUrl) + '/o/' + objectId;
   }
-  return trimTrailingSlash(baseUrl) + '/o/' + slug;
+  return urlSafety.trimTrailingSlash(baseUrl) + '/o/' + slug;
 }
 
-function stripMarkup(text) {
-  return String(text || '')
-    .replace(/<[^>]+>/g, ' ')
-    .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')
-    .replace(/[#*_`>~]/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
-}
-
-function latestReporterComment(issue) {
-  if (!issue || !issue.reporter || !issue.comments) {
-    return '';
-  }
-  const reporterLogin = issue.reporter.login;
-  let latest = null;
-  let latestCreated = -1;
-  issue.comments.forEach(function (comment) {
-    if (!comment || !comment.author || comment.author.login !== reporterLogin) {
-      return;
-    }
-    const created = comment.created ? Number(comment.created) : 0;
-    if (created >= latestCreated) {
-      latestCreated = created;
-      latest = comment;
-    }
-  });
-  return latest ? stripMarkup(latest.text) : '';
-}
-
-function collapseWs(text) {
-  return String(text || '').replace(/\s+/g, ' ').trim();
-}
-
-function buildSearchQueries(issue) {
-  const summary = collapseWs(stripMarkup(issue && issue.summary));
-  const description = collapseWs(stripMarkup(issue && issue.description));
-  const customerComment = collapseWs(latestReporterComment(issue));
-
-  const queries = [];
-  const pushUnique = function (label, q) {
-    const value = collapseWs(q);
-    if (!value) {
-      return;
-    }
-    const clipped = value.length > MAX_QUERY_CHARS ? value.substring(0, MAX_QUERY_CHARS) : value;
-    for (let i = 0; i < queries.length; i++) {
-      if (queries[i].q === clipped) {
-        return;
-      }
-    }
-    queries.push({label: label, q: clipped});
-  };
-
-  // Short, high-signal first — hybrid often returns empty for long/noisy ticket text
-  // even when a clear title match exists.
-  pushUnique('summary', summary);
-  if (summary) {
-    pushUnique('title', '#' + summary);
-  }
-  pushUnique(
-    'full',
-    [summary, description, customerComment].filter(Boolean).join(' '),
-  );
-  return queries;
-}
-
-/**
- * Resolve the Phonemos site object id for the configured base URL (GET /v1/sites/self).
- * Use as `within` when searching the whole site without a topic/zone root.
- */
 function resolveSiteObjectId(settings, accessToken) {
   const unsafe = urlSafety.validateOutboundSettings(settings, ['phonemosBaseUrl']);
   if (unsafe) {
@@ -352,8 +249,6 @@ function mapSearchHits(settings, data) {
 }
 
 function runSearchStrategies(settings, accessToken, queries) {
-  // Cap Phonemos load: hybrid+wikipage per query, then at most two fallbacks on the
-  // first query (fulltext+wikipage, hybrid without type filter). Was up to ~12 calls.
   const strategies = [];
   for (let qi = 0; qi < queries.length; qi++) {
     strategies.push({
@@ -378,11 +273,10 @@ function runSearchStrategies(settings, accessToken, queries) {
     });
   }
 
-  const maxAttempts = 5;
-  const attempts = [];
   let lastError = null;
+  let anySuccess = false;
 
-  for (let i = 0; i < strategies.length && attempts.length < maxAttempts; i++) {
+  for (let i = 0; i < strategies.length; i++) {
     const strategy = strategies[i];
     const serviceResponse = searchPhonemos(
       settings,
@@ -394,62 +288,32 @@ function runSearchStrategies(settings, accessToken, queries) {
 
     if (!serviceResponse || !serviceResponse.isSuccess) {
       const status = serviceResponse && serviceResponse.code != null ? serviceResponse.code : 0;
-      attempts.push({
-        label: strategy.label,
-        mode: strategy.mode,
-        objectTypes: strategy.objectTypes ? strategy.objectTypes.join(',') : '(any)',
-        status: status,
-        hits: 0,
-        failed: true,
-      });
-      // Keep going — hybrid may 4xx while fulltext works.
-      lastError = {
-        code: status,
-        strategy: strategy,
-      };
+      lastError = {code: status, strategy: strategy};
       continue;
     }
 
+    anySuccess = true;
     const data = parseJsonSafe(serviceResponse) || {};
     const items = mapSearchHits(settings, data);
-    attempts.push({
-      label: strategy.label,
-      mode: strategy.mode,
-      objectTypes: strategy.objectTypes ? strategy.objectTypes.join(',') : '(any)',
-      status: serviceResponse.code,
-      hits: items.length,
-    });
-
     if (items.length) {
       return {
         success: true,
         query: strategy.q,
-        queryLabel: strategy.label,
         mode: data.mode || strategy.mode,
         items: items,
-        attempts: attempts,
-        within: settings.withinObjectId,
       };
     }
   }
 
-  if (lastError && attempts.every(function (a) { return a.hits === 0 && a.failed; })) {
-    return {
-      success: false,
-      lastError: lastError,
-      attempts: attempts,
-      within: settings.withinObjectId,
-    };
+  if (lastError && !anySuccess) {
+    return {success: false, lastError: lastError};
   }
 
   return {
     success: true,
     query: queries.length ? queries[0].q : '',
-    queryLabel: queries.length ? queries[0].label : '',
     mode: 'fulltext',
     items: [],
-    attempts: attempts,
-    within: settings.withinObjectId,
   };
 }
 
@@ -459,11 +323,8 @@ function searchText(settings, accessToken, query) {
     return {
       success: true,
       query: '',
-      queryLabel: 'query',
       mode: 'hybrid',
       items: [],
-      attempts: [],
-      within: settings.withinObjectId,
     };
   }
   const q = clipped.length > MAX_QUERY_CHARS ? clipped.substring(0, MAX_QUERY_CHARS) : clipped;
@@ -472,98 +333,6 @@ function searchText(settings, accessToken, query) {
 
 exports.normalizeWithinObjectId = normalizeWithinObjectId;
 exports.resolveSiteObjectId = resolveSiteObjectId;
+exports.runSearchStrategies = runSearchStrategies;
 exports.searchText = searchText;
-
-exports.httpHandler = {
-  endpoints: [
-    {
-      scope: 'issue',
-      method: 'POST',
-      path: 'list',
-      permissions: ['READ_ISSUE'],
-      handle: function handle(ctx) {
-        phonemosSession.purgeLegacyGlobalSecrets(ctx);
-        const settings = requireSettings(ctx);
-        if (!settings.phonemosBaseUrl) {
-          return ctx.response.json({
-            success: false,
-            message: 'Missing app settings: phonemosBaseUrl',
-          });
-        }
-        const unsafe = urlSafety.validateOutboundSettings(settings, [
-          'phonemosBaseUrl',
-          'oauthTokenUrl',
-        ]);
-        if (unsafe) {
-          return ctx.response.json({success: false, message: unsafe});
-        }
-        if (!settings.withinObjectId) {
-          return ctx.response.json({
-            success: false,
-            message:
-              'Invalid Phonemos search root. Set the project setting to an object UUID, ' +
-              'a 22-character Phonemos slug, or a topic URL like ' +
-              'https://showcase.phonemos.cloud/t/{slug}/start.' +
-              (settings.withinObjectIdRaw
-                ? '\nCurrent value: ' + settings.withinObjectIdRaw
-                : ''),
-          });
-        }
-
-        // Ignore any client-supplied accessToken — always use the server-side session
-        // for the current YouTrack user (prevents token substitution / proxy abuse).
-        const session = phonemosSession.ensureAccessToken(ctx, settings);
-        if (!session.ok) {
-          return ctx.response.json({
-            success: false,
-            needsAuth: true,
-            message: session.message || 'Connect to Phonemos first.',
-          });
-        }
-        const accessToken = session.accessToken;
-
-        const queries = buildSearchQueries(ctx.issue);
-        if (!queries.length) {
-          return ctx.response.json({
-            success: true,
-            query: '',
-            mode: 'hybrid',
-            items: [],
-            within: settings.withinObjectId,
-            attempts: [],
-          });
-        }
-
-        const result = runSearchStrategies(settings, accessToken, queries);
-        if (!result.success) {
-          const err = result.lastError || {};
-          let message = 'Phonemos search failed with status ' + err.code + '.';
-          if (err.code === 401) {
-            phonemosSession.disconnectUser(ctx, settings);
-            message +=
-              '\n\nPhonemos rejected the access token. In Keycloak, open this app’s client → Client scopes ' +
-              'and assign the realm scope "hasura" as Default (it adds the Hasura claims Phonemos requires). ' +
-              'Also request scope "hasura" (app setting OAuth scopes). Then disconnect/reconnect in the widget.';
-          }
-          return ctx.response.json({
-            success: false,
-            needsAuth: err.code === 401,
-            message: message,
-            attempts: result.attempts || [],
-            within: settings.withinObjectId,
-          });
-        }
-
-        return ctx.response.json({
-          success: true,
-          query: result.query,
-          queryLabel: result.queryLabel,
-          mode: result.mode,
-          items: result.items,
-          within: result.within,
-          attempts: result.attempts,
-        });
-      },
-    },
-  ],
-};
+exports.MAX_QUERY_CHARS = MAX_QUERY_CHARS;

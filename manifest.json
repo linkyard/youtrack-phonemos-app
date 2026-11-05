@@ -2,7 +2,7 @@
   "$schema": "https://json.schemastore.org/youtrack-app.json",
   "name": "phonemos",
   "title": "Phonemos",
-  "description": "Connector that gives access to the Phonemos knowledge base from within Youtrack. Suggests Phonemos knowledge base articles on YouTrack Helpdesk tickets. Each person signs in with their own Phonemos account (OAuth2), and Phonemos permissions decide which pages they can open.",
+  "description": "Connector that gives access to the Phonemos knowledge base from within YouTrack. Suggests Phonemos knowledge base articles on YouTrack Helpdesk tickets. Each person connects their own Phonemos account (OAuth2), and Phonemos permissions decide which pages they can open.",
   "version": "1.0.0",
   "url": "https://github.com/linkyard/youtrack-phonemos-app",
   "icon": "icon.png",
@@ -15,11 +15,11 @@
   },
   "widgets": [
     {
-      "key": "suggested-kb",
+      "key": "ticket-search",
       "name": "Suggested knowledge base articles",
-      "indexPath": "suggested-kb/index.html",
+      "indexPath": "ticket-search/index.html",
       "extensionPoint": "ISSUE_ABOVE_ACTIVITY_STREAM",
-      "iconPath": "suggested-kb/widget-icon.png",
+      "iconPath": "common/phonemos-favicon.svg",
       "description": "Suggests Phonemos articles for the current helpdesk ticket",
       "permissions": ["READ_ISSUE"],
       "expectedDimensions": {
@@ -28,11 +28,11 @@
       }
     },
     {
-      "key": "oauth-callback",
+      "key": "global-search",
       "name": "Phonemos search",
-      "indexPath": "oauth-callback/index.html",
+      "indexPath": "global-search/index.html",
       "extensionPoint": "MAIN_MENU_ITEM",
-      "iconPath": "oauth-callback/widget-icon.png",
+      "iconPath": "common/phonemos-favicon.svg",
       "description": "Search the Phonemos knowledge base and manage the connection",
       "showHeader": false
     }
