@@ -25,7 +25,7 @@ export default defineConfig({
           dest: '.'
         },
         {
-          src: '*.*',
+          src: 'backend/**/*.js',
           dest: '.'
         },
         {
@@ -61,8 +61,8 @@ export default defineConfig({
     assetsDir: 'widgets/assets',
     rollupOptions: {
       input: {
-        'suggested-kb': resolve(__dirname, 'src/widgets/suggested-kb/index.html'),
-        'oauth-callback': resolve(__dirname, 'src/widgets/oauth-callback/index.html'),
+        'ticket-search': resolve(__dirname, 'src/widgets/ticket-search/index.html'),
+        'global-search': resolve(__dirname, 'src/widgets/global-search/index.html'),
       }
     }
   }

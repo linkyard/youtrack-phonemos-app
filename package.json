@@ -6,11 +6,11 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "copy:dist": "rm -rf dist && mkdir -p dist && cp src/*.* dist/ && cp manifest.json settings.json dist/ && cp public/*.* dist/",
-    "build": "tsc -p tsconfig.app.json && if ls src/widgets/*/index.html >/dev/null 2>&1; then vite build; else npm run copy:dist; fi && youtrack-app app validate",
+    "build": "tsc -p tsconfig.app.json && vite build && youtrack-app app validate",
+    "clean": "node -e \"require('fs').rmSync('phonemos.zip',{force:true})\"",
     "lint": "eslint --report-unused-disable-directives --max-warnings 0",
     "test": "echo 'no tests'",
-    "pack": "rm -rf phonemos.zip && cd dist/ && bestzip ../phonemos.zip *",
+    "pack": "npm run clean && cd dist/ && bestzip ../phonemos.zip *",
     "upload": "youtrack-app app upload"
   },
   "dependencies": {
@@ -24,7 +24,7 @@
     "@eslint/eslintrc": "^3.1.0",
     "@eslint/js": "^9.13.0",
     "@jetbrains/eslint-config": "^6.0.2",
-    "@jetbrains/youtrack-apps-tools": "^1.0.0",
+    "@jetbrains/youtrack-apps-tools": "^1.0.3",
     "@types/react": "^18.3.3",
     "@types/react-dom": "^18.3.0",
     "@vitejs/plugin-react": "^4.3.4",

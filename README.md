@@ -6,7 +6,7 @@ Suggests Phonemos knowledge base articles on YouTrack Helpdesk tickets, and lets
 
 - **Suggested knowledge base articles** widget under the ticket description (`ISSUE_ABOVE_ACTIVITY_STREAM`)
 - Hybrid Phonemos search over ticket summary, description, and the latest comment from the reporter
-- **Phonemos search** main-menu page: connection status and search across the whole site the signed-in user can access
+- **Phonemos search** main-menu page: connection status and search across the whole site the connected user can access
 - Per-user OAuth2 against the Phonemos Keycloak IdP (no shared service-account token)
 - **Disconnect** on the ticket widget and the menu page (revokes the Keycloak refresh token when it can)
 
@@ -31,7 +31,7 @@ npm run pack
 
 1. Administration → Apps → Add app → Upload ZIP (`phonemos.zip`)
 2. Attach the app to your Helpdesk project(s)
-3. Configure **global** app settings (OAuth + Phonemos base URL)
+3. Configure **global** app settings (OAuth client, Keycloak base URL, Phonemos base URL)
 4. Configure **project** settings (`withinObjectId`, optional `searchLimit`)
 5. Open the **Phonemos search** menu item, or a ticket, and use **Connect** the first time
 
@@ -41,8 +41,7 @@ npm run pack
 |---------|-------|-------------|
 | Phonemos base URL | Global | e.g. `https://wiki.example.com` |
 | OAuth client ID / secret | Global | Confidential Keycloak client |
-| OAuth authorization / token URLs | Global | Keycloak OIDC endpoints |
-| OAuth redirect URI | Global | Optional. Empty accepts the derived popup callback on this YouTrack host. If set, it must be that exact URL |
+| Keycloak base URL | Global | Realm URL: `http(s)://{keycloak-host}/realms/{realm}` (older Keycloak: `…/auth/realms/{realm}`). The app derives the OIDC endpoints `…/protocol/openid-connect/{auth,token,userinfo,revoke}` from it. |
 | Phonemos search root | Project | UUID, 22-character slug, or topic URL. Used as `within` for ticket suggestions. The menu search ignores this and uses the whole site. |
 | Max suggestions | Project | Ticket widget only. Default 5, maximum 20. Menu search returns up to 10. |
 
@@ -53,21 +52,25 @@ npm run pack
 
    `https://{youtrack}/api/appResources/{installationId}/widgets/oauth-popup-callback.html`
 
-   The ticket widget shows the exact URL under **Connect to Phonemos**. A Keycloak test pattern is:
+   If YouTrack is served under a context path (e.g. `/youtrack`), that prefix is included:
+
+   `https://{host}/youtrack/api/appResources/{installationId}/widgets/oauth-popup-callback.html`
+
+   A Keycloak test pattern is:
 
    `https://{youtrack}/api/appResources/*`
 
-   The app itself only accepts a redirect on this YouTrack host (the request `Host` header). Leave **OAuth redirect URI** empty, or set it to the exact popup callback the widget shows. A different host, or a different value than that setting, is rejected.
+   The app only accepts a redirect on this YouTrack host (request `Host` header) whose path ends with `/api/appResources/{id}/widgets/oauth-popup-callback.html`.
 
-3. **Client scopes** — on the Keycloak client, assign at least:
-   - `hasura` as **Default** (required — adds Hasura claims Phonemos needs in the access token)
-   - `offline_access` as Default (refresh tokens)
-   - usual OIDC defaults (`openid` / `profile` / `email`)
-4. Put client id/secret and the auth/token URLs into the YouTrack app settings. **OAuth scopes** should include `hasura` (default: `openid profile email offline_access hasura`). **OAuth redirect URI** is optional. The widget uses the derived `appResources` URL. If the setting is filled in, it must equal that URL.
+3. **Client scopes** — the app always requests the fixed scope `openid profile email offline_access hasura` (not configurable). Every one of these must be available to the Keycloak client:
+   - `hasura` as **Default** (required — adds Hasura claims Phonemos needs in the access token; without it Phonemos rejects the token)
+   - `offline_access` (refresh tokens; without it users must reconnect whenever the access token expires)
+   - `openid`, `profile`, `email` (the post-login check compares the Keycloak username/e-mail with the YouTrack user)
+4. Put client id/secret and the **Keycloak base URL** (realm URL) into the YouTrack app settings. The widget derives the `appResources` callback URL automatically.
 
    **OAuth client secret** is a YouTrack secret setting: paste the Keycloak secret once and save. After that the UI only shows a mask; the real value is injected only into outbound token requests via HTTP Basic (`client_secret_basic`). If token exchange fails after an app upgrade, clear the secret field, paste the full Keycloak secret again, and save.
 
-Outbound URLs (`Phonemos base URL`, OAuth authorization/token URLs) must be `https` (or `http` on localhost). Other private and reserved IP addresses, and cloud metadata hostnames, are rejected. Authorization and token URLs must share the same host.
+Outbound URLs (`Phonemos base URL`, `Keycloak base URL`) must be absolute `http` or `https` URLs without embedded credentials.
 
 The callback finishes on the YouTrack backend and notifies the opener via `postMessage` (target `*`, because widgets run in `about:srcdoc`) with `event.source` + OAuth `state` checks on receive.
 
@@ -78,6 +81,8 @@ Both searches call `POST {phonemosBaseUrl}/_api/rest/v1/objects-search` and stop
 1. Hybrid, `wikipage` only, once per query (in order)
 2. Fulltext, `wikipage` only, on the first query
 3. Hybrid with no type filter, on the first query
+
+The search endpoints (`ticket-search/list`, `global-search/query`) do not call Phonemos themselves. They validate the request, schedule an async function (`ctx.invokeAsync`, YouTrack 2026.2+), and return `{pending: true, jobId}`, so no HTTP request thread waits on Phonemos or Keycloak. The async function runs the token refresh and searches, then stores the response for up to 5 minutes on the YouTrack User (`phonemosSearchJobs`). The widget polls `ticket-search/result` or `global-search/result` for it.
 
 #### Ticket suggestions
 
@@ -98,14 +103,14 @@ The **Phonemos search** main-menu page searches the whole site. It resolves the 
 ## Auth flow
 
 1. Widget opens a Keycloak authorize popup (PKCE).
-2. Callback page finishes via authenticated `oauth/complete` and notifies the opener (`postMessage` with `*` so `about:srcdoc` widgets receive it; the opener accepts only its popup / YouTrack host origin and matching `state`).
+2. Callback page finishes and notifies the opener (`postMessage` with `*` so `about:srcdoc` widgets receive it; the opener accepts only its popup / YouTrack host origin and matching `state`).
 3. YouTrack HTTP handler exchanges the code using the client secret and the **server-stored** PKCE verifier/`redirect_uri` (the `appResources` popup callback on this YouTrack host). Tokens are stored on the YouTrack User (`phonemosOAuthSession`). Access and refresh tokens never leave the YouTrack backend; the widget only sees `{connected: true}`.
-4. Pending authorization codes are handed out once via `POST oauth/pending` (consumed). Disconnect, and a Phonemos 401, revoke the Keycloak refresh token when possible.
+4. Disconnect, and a Phonemos 401, revoke the Keycloak refresh token when possible.
 5. Ticket suggestions and menu search use the **server-stored** access token for the current YouTrack user (the widget never sends a Bearer token). Phonemos still enforces that user’s permissions. Refresh sends the stored refresh token to the Keycloak token endpoint. `invalid_grant` clears the local session; a timeout or token-endpoint 5xx leaves it in place.
 
-OAuth endpoints reject guest users and rate-limit sign-in attempts per YouTrack user.
+OAuth endpoints reject guest users and rate-limit connection attempts per YouTrack user.
 
-Shared SSO (YouTrack and Phonemos on the same Keycloak) makes reconnects nearly silent; otherwise users sign in to Phonemos once per browser session.
+Shared SSO (YouTrack and Phonemos on the same Keycloak) makes reconnects nearly silent; otherwise users would need to connect to Phonemos once per browser session.
 
 ## Optional CLI upload
 
